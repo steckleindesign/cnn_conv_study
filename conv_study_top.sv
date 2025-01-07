@@ -7,10 +7,10 @@
 localparam CONV_FILTERS = 6;
 
 module conv_study_top (
-    input        clk,
-    input        rst,
-    input  [7:0] feature_in,
-    output [7:0] features_out[CONV_FILTERS:0]
+    input         clk,
+    input         rst,
+    input   [7:0] feature_in,
+    output [15:0] features_out[CONV_FILTERS-1:0]
 );
 
     logic        line_buf_full;

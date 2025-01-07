@@ -38,7 +38,7 @@
 
 /*
 TODO: Determine proper bitwidths for adder stages, keeping data to 16 bits
-      Understand line buffering
+      Async reset
       
 */
 
@@ -81,7 +81,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Again, we are not using the last 2 columns in this iteration (all 0's so its viable)
     // For first synthesis effort, using FILTER_SIZE+1 rows, no need for input feature
     // to be used in the logic, and for now we are not worried about memory
-    logic         [7:0] line_buffer[FILTER_SIZE-1:0][INPUT_WIDTH-1:0];
+    logic         [7:0] line_buffer[FILTER_SIZE:0][INPUT_WIDTH-1:0];
     // Indexed features to be used for * operation
     logic         [7:0] feature_operands[FILTER_SIZE-1:0][2:0];
     logic signed  [7:0] weight_operands[NUM_FILTERS-1:0][FILTER_SIZE-1:0][2:0];
@@ -97,7 +97,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic               macc_ready;
     logic               lb_full;
     logic               next_row;
-    logic               has_completed_row;
     logic         [6:0] adder_tree_valid_sr[2:0];
     logic signed [23:0] adder1_stage1[NUM_FILTERS-1:0][14:0]; // 15 dsp outs
     logic signed [23:0] adder1_stage2[NUM_FILTERS-1:0][17:0]; // 8 adder outs from stage 1 + 10 dsp outs
@@ -271,57 +270,72 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     always_comb begin
         case(state)
             ONE: begin
-                feature_operands[0] = line_buffer[feat_col_ctr-2];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][0] = line_buffer[i][feat_col_ctr-2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][0] = weights[i][0];
-                feature_operands[1] = line_buffer[feat_col_ctr-1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][1];
-                feature_operands[2] = line_buffer[feat_col_ctr  ];
+                    weight_operands[i][1] = weights[i][1];              
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][2] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][2] = weights[i][2];
             end
             TWO: begin
-                feature_operands[0] = line_buffer[feat_col_ctr+1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][0] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][0] = weights[i][3];
-                feature_operands[1] = line_buffer[feat_col_ctr+2];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][1] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][1] = weights[i][4];
-                feature_operands[2] = line_buffer[feat_col_ctr-1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][2] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][2] = weights[i][0];
             end
             THREE: begin
-                feature_operands[0] = line_buffer[feat_col_ctr-1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][0] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][0] = weights[i][1];
-                feature_operands[1] = line_buffer[feat_col_ctr  ];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][1] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][1] = weights[i][2];
-                feature_operands[2] = line_buffer[feat_col_ctr+1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][2] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][2] = weights[i][3];
             end
             FOUR: begin
-                feature_operands[0] = line_buffer[feat_col_ctr+2];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][0] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][0] = weights[i][4];
-                feature_operands[1] = line_buffer[feat_col_ctr-1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][1] = weights[i][0];
-                feature_operands[2] = line_buffer[feat_col_ctr  ];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][2] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][2] = weights[i][1];
             end
             FIVE: begin
-                feature_operands[0] = line_buffer[feat_col_ctr  ];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][0] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][0] = weights[i][2];
-                feature_operands[1] = line_buffer[feat_col_ctr+1];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][1] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][1] = weights[i][3];
-                feature_operands[2] = line_buffer[feat_col_ctr+2];
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_operands[i][2] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     weight_operands[i][2] = weights[i][4];
             end
@@ -385,9 +399,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     always_comb begin
         next_row   = feat_col_ctr == COL_END-1 && state == FIVE;
         // TODO: Review full flag, is it right to set the flag at an almost full state?
-        lb_full    = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_END-2;
+        lb_full    = lb_row_ctr == FILTER_SIZE && lb_col_ctr == COL_END-2;
         macc_ready = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_START+FILTER_SIZE;
-        if (next_row) has_completed_row = 1;
     end
     
     always_ff @(posedge i_clk)
@@ -413,22 +426,19 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         if (i_rst) begin
             lb_row_ctr <= ROW_START;
             lb_col_ctr <= COL_START;
-        end else begin
-            if (i_feature_valid)
+        end else
+            if (i_feature_valid) begin
                 lb_col_ctr <= lb_col_ctr + 1;
                 if (lb_col_ctr == COL_END-1) begin
                     lb_col_ctr <= COL_START;
                     lb_row_ctr <= lb_row_ctr + 1;
                 end
-                if (has_completed_row) begin
-                    if (feat_col_ctr > 15) begin
-                        // fill front
-                    end else if (feat_col_ctr < 15)
-                        // fill end
-                    end
-                end else begin
-                    line_buffer[lb_row_ctr][lb_col_ctr] <= i_feature;
-                end
+                line_buffer[lb_row_ctr][lb_col_ctr] <= i_feature;
+            end else if (next_row) begin
+                for (int i = 2; i < COL_END; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        line_buffer[j][i] <= line_buffer[j+1][i];
+                lb_col_ctr <= COL_START;
             end
     
     assign o_buffer_full   = lb_full;
