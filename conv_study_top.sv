@@ -7,20 +7,20 @@
 localparam CONV_FILTERS = 6;
 
 module conv_study_top (
-    input         clk,
-    input         rst,
-    input   [7:0] feature_in,
-    output [15:0] features_out[CONV_FILTERS-1:0]
+    input clk,
+    input rst,
+    input          [7:0] feature_in,
+    output signed [15:0] features_out[CONV_FILTERS-1:0]
 );
 
-    logic        line_buf_full;
-    logic        conv1_feat_in_valid;
-    logic  [7:0] conv1_feature_in;
+    logic               line_buf_full;
+    logic               conv1_feat_in_valid;
+    logic         [7:0] conv1_feature_in;
     
-    logic        output_features_valid;
-    logic [15:0] output_features[CONV_FILTERS-1:0];
+    logic               output_features_valid;
+    logic signed [15:0] output_features[CONV_FILTERS-1:0];
     
-    logic [15:0] feature_stream_out[CONV_FILTERS-1:0];
+    logic        [15:0] feature_stream_out[CONV_FILTERS-1:0];
     
     feature_buf feature_buf_inst (.clk(clk),
                                   .rst(rst),

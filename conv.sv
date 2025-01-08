@@ -270,74 +270,89 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     always_comb begin
         case(state)
             ONE: begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][0] = line_buffer[i][feat_col_ctr-2];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][0] = weights[i][0];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][0] = weights[i][j][0];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][1];              
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][1] = weights[i][j][1];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][2] = weights[i][2];
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][2] = weights[i][j][2];
             end
             TWO: begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][0] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][0] = weights[i][3];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][0] = weights[i][j][3];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][4];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][1] = weights[i][j][4];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][2] = weights[i][0];
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][2] = weights[i][j][0];
             end
             THREE: begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][0] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][0] = weights[i][1];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][0] = weights[i][j][1];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][2];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][1] = weights[i][j][2];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][2] = weights[i][3];
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][2] = weights[i][j][3];
             end
             FOUR: begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][0] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][0] = weights[i][4];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][0] = weights[i][j][4];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][0];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][1] = weights[i][j][0];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][2] = weights[i][1];
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][2] = weights[i][j][1];
             end
             FIVE: begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][0] = line_buffer[i][feat_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][0] = weights[i][2];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][0] = weights[i][j][2];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = line_buffer[i][feat_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][1] = weights[i][3];
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][1] = weights[i][j][3];
+                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = line_buffer[i][feat_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
-                    weight_operands[i][2] = weights[i][4];
+                    for (int j = 0; j < FILTER_SIZE; j++)
+                        weight_operands[i][j][2] = weights[i][j][4];
             end
         endcase
     end
@@ -441,8 +456,12 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 lb_col_ctr <= COL_START;
             end
     
+    always_comb
+        for (int i = 0; i < NUM_FILTERS; i++)
+            // TODO: Placeholder, fix dimensions
+            o_features[i] = macc_acc[i][23:8];
+    
     assign o_buffer_full   = lb_full;
-    assign o_features      = macc_acc;
     assign o_feature_valid = adder_tree_valid_sr[0][6] ||
                              adder_tree_valid_sr[1][6] ||
                              adder_tree_valid_sr[2][6];
