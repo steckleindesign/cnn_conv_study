@@ -74,6 +74,21 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     (* rom_style = "block" *) logic signed [15:0]
     biases [NUM_FILTERS-1:0];
     initial $readmemb(BIASES_FILE, biases);
+    
+    // Weight ROMs
+    // 90 distributed RAMs -> 1 per DSP48E1
+    // 16-bit signed data x 6 filters x 5 rows x 3 columns x 5 deep
+    // Overall there is 90x5 = 90 8x16-bit Distributed RAMs
+    // 1 SLICEM can implement 2 8x16-bit Distruibuted RAMs
+    // Hence, 45 slices will be used for the weight RAMs
+    // TODO: Which syntax is standard/better/preferred?
+    // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
+    logic signed [15:0] weights [6][5][3][5];
+    
+    
+    
+    
+    
 
     // For height=5 filter, we only need to store 4 rows of pixel data
     // For now we will starting MACC operations once line buffer is full
@@ -84,7 +99,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic         [7:0] line_buffer[FILTER_SIZE:0][INPUT_WIDTH-1:0];
     // Indexed features to be used for * operation
     logic         [7:0] feature_operands[FILTER_SIZE-1:0][2:0];
-    logic signed  [7:0] weight_operands[NUM_FILTERS-1:0][FILTER_SIZE-1:0][2:0];
+    logic signed [15:0] weight_operands[NUM_FILTERS-1:0][FILTER_SIZE-1:0][2:0];
     
     // Line buffer location
     logic [$clog2(ROW_END)-1:0] lb_row_ctr;
@@ -98,31 +113,31 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic               lb_full;
     logic               next_row;
     logic         [6:0] adder_tree_valid_sr[2:0];
-    logic signed [23:0] adder1_stage1[NUM_FILTERS-1:0][14:0]; // 15 dsp outs
-    logic signed [23:0] adder1_stage2[NUM_FILTERS-1:0][17:0]; // 8 adder outs from stage 1 + 10 dsp outs
-    logic signed [23:0] adder1_stage3[NUM_FILTERS-1:0][8:0];  // 9 adder outs from stage 2
-    logic signed [23:0] adder1_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
-    logic signed [23:0] adder1_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
-    logic signed [23:0] adder1_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [23:0] adder1_result[NUM_FILTERS-1:0];       // adder tree 1 result
-    logic signed [23:0] adder2_stage1[NUM_FILTERS-1:0][4:0];  // 5 dsp outs
-    logic signed [23:0] adder2_stage2[NUM_FILTERS-1:0][17:0]; // 3 adder outs from stage 1 + 15 dsp outs
-    logic signed [23:0] adder2_stage3[NUM_FILTERS-1:0][13:0]; // 9 adder outs from stage 2 + 5 dsp outs
-    logic signed [23:0] adder2_stage4[NUM_FILTERS-1:0][6:0];  // 7 adder outs from stage 3
-    logic signed [23:0] adder2_stage5[NUM_FILTERS-1:0][3:0];  // 4 adder outs from stage 4
-    logic signed [23:0] adder2_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [23:0] adder2_result[NUM_FILTERS-1:0];       // adder tree 2 result
-    logic signed [23:0] adder3_stage1[NUM_FILTERS-1:0][9:0];  // 10 dsp outs
-    logic signed [23:0] adder3_stage2[NUM_FILTERS-1:0][19:0]; // 5 adder outs from stage 1 + 15 dsp outs
-    logic signed [23:0] adder3_stage3[NUM_FILTERS-1:0][9:0];  // 10 adder outs from stage 2
-    logic signed [23:0] adder3_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
-    logic signed [23:0] adder3_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
-    logic signed [23:0] adder3_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [23:0] adder3_result[NUM_FILTERS-1:0];       // adder tree 3 result
-    logic signed [23:0] macc_acc[NUM_FILTERS-1:0];
+    logic signed [15:0] adder1_stage1[NUM_FILTERS-1:0][14:0]; // 15 dsp outs
+    logic signed [15:0] adder1_stage2[NUM_FILTERS-1:0][17:0]; // 8 adder outs from stage 1 + 10 dsp outs
+    logic signed [15:0] adder1_stage3[NUM_FILTERS-1:0][8:0];  // 9 adder outs from stage 2
+    logic signed [15:0] adder1_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
+    logic signed [15:0] adder1_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
+    logic signed [15:0] adder1_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
+    logic signed [15:0] adder1_result[NUM_FILTERS-1:0];       // adder tree 1 result
+    logic signed [15:0] adder2_stage1[NUM_FILTERS-1:0][4:0];  // 5 dsp outs
+    logic signed [15:0] adder2_stage2[NUM_FILTERS-1:0][17:0]; // 3 adder outs from stage 1 + 15 dsp outs
+    logic signed [15:0] adder2_stage3[NUM_FILTERS-1:0][13:0]; // 9 adder outs from stage 2 + 5 dsp outs
+    logic signed [15:0] adder2_stage4[NUM_FILTERS-1:0][6:0];  // 7 adder outs from stage 3
+    logic signed [15:0] adder2_stage5[NUM_FILTERS-1:0][3:0];  // 4 adder outs from stage 4
+    logic signed [15:0] adder2_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
+    logic signed [15:0] adder2_result[NUM_FILTERS-1:0];       // adder tree 2 result
+    logic signed [15:0] adder3_stage1[NUM_FILTERS-1:0][9:0];  // 10 dsp outs
+    logic signed [15:0] adder3_stage2[NUM_FILTERS-1:0][19:0]; // 5 adder outs from stage 1 + 15 dsp outs
+    logic signed [15:0] adder3_stage3[NUM_FILTERS-1:0][9:0];  // 10 adder outs from stage 2
+    logic signed [15:0] adder3_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
+    logic signed [15:0] adder3_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
+    logic signed [15:0] adder3_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
+    logic signed [15:0] adder3_result[NUM_FILTERS-1:0];       // adder tree 3 result
+    logic signed [15:0] macc_acc[NUM_FILTERS-1:0];
     
     // TODO: Flatten
-    logic signed [23:0] mult_out[NUM_FILTERS-1:0][FILTER_SIZE*3-1:0];
+    logic signed [15:0] mult_out[NUM_FILTERS-1:0][FILTER_SIZE*3-1:0];
     
     typedef enum logic [2:0] {
         ONE, TWO, THREE, FOUR, FIVE
@@ -185,11 +200,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 adder1_stage4[i][4]     <= adder1_stage3[i][8];
                 for (int j = 0; j < 4; j++)
                     adder1_stage4[i][j] <= adder1_stage3[i][j*2] + adder1_stage3[i][j*2+1];
-                    
+                
                 adder1_stage5[i][2]     <= adder1_stage4[i][4];
                 for (int j = 0; j < 2; j++)
                     adder1_stage5[i][j] <= adder1_stage4[i][j*2] + adder1_stage4[i][j*2+1];
-                    
+                
                 adder1_stage6[i][1]     <= adder1_stage5[i][2];
                 adder1_stage6[i][0]     <= adder1_stage5[i][0] + adder1_stage5[i][1];
                 
@@ -211,11 +226,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 
                 for (int j = 0; j < 7; j++)
                     adder2_stage4[i][j+5] <= adder2_stage3[i][j*2] + adder2_stage3[i][j*2+1];
-                    
+                
                 adder2_stage5[i][3]     <= adder2_stage4[i][6];
                 for (int j = 0; j < 3; j++)
                     adder2_stage5[i][j] <= adder2_stage4[i][j*2] + adder2_stage4[i][j*2+1];
-                    
+                
                 for (int j = 0; j < 2; j++)
                     adder2_stage6[i][j+5] <= adder2_stage5[i][j*2] + adder2_stage5[i][j*2+1];
                 
@@ -240,7 +255,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 adder3_stage5[i][2] <= adder3_stage4[i][4];
                 for (int j = 0; j < 2; j++)
                     adder3_stage5[i][j] <= adder3_stage4[i][j*2] + adder3_stage4[i][j*2+1];
-                    
+                
                 adder3_stage6[i][1]     <= adder3_stage5[i][2];
                 adder3_stage6[i][0]     <= adder3_stage5[i][0] + adder3_stage5[i][1];
                 
@@ -259,7 +274,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             macc_acc = adder3_result;
         else
             macc_acc = macc_acc;
-    
     
     always_ff @(posedge i_clk)
         for (int i = 0; i < NUM_FILTERS; i++)
@@ -458,8 +472,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     always_comb
         for (int i = 0; i < NUM_FILTERS; i++)
-            // TODO: Placeholder, fix dimensions
-            o_features[i] = macc_acc[i][23:8];
+            o_features[i] = macc_acc[i];
     
     assign o_buffer_full   = lb_full;
     assign o_feature_valid = adder_tree_valid_sr[0][6] ||
