@@ -83,10 +83,33 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Hence, 45 slices will be used for the weight RAMs
     // TODO: Which syntax is standard/better/preferred?
     // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
-    logic signed [15:0] weights [6][5][3][5];
+    logic signed [15:0] weights [NUM_FILTERS][5][3][5];
     
+    logic         [7:0] feature_rams [FILTER_SIZE][INPUT_WIDTH];
+        
+    logic         [7:0] feature_window [5][5];
+    logic         [7:0] next_row_features [5][5];
     
+    /*
+    5x5 Feature window
     
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    
+    Input of each value "x" is output of 16-bit wide 2:1 MUX
+    
+    The inputs of the 2:1 MUX for the first 4 columns:
+        1. output of register in next column
+        2. output of corresponding feature in next_row_features block
+    
+    The inputs of the 2:1 MUX for the last column:
+        1. output of feature RAM
+        2. output of corresponding feature in next_row_features block
+    
+    */
     
     
 
@@ -174,6 +197,35 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             endcase
         else
             next_state = ONE;
+    
+    always_ff @(posedge clk)
+    begin
+        // Probably take out reset, although it may be a free signal,
+        // the 6th input to the feature window mux LUTs
+        if (rst) begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE; j++) begin
+                    feature_window[i][j]    <= 0;
+                    next_row_features[i][j] <= 0;
+                end
+            end
+        end else if (next_row) begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE; j++) begin
+                    feature_window[i][j] <= next_row_features[i][j] <= 0;
+                end
+            end
+        end else begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE-1; j++) begin
+                    feature_window[i][j] <= feature_window[i][j+1];
+                end
+                feature_window[i][FILTER_SIZE-1] <= feature_rams[i][feat_col_ctr];
+            end
+        end
+    end
+    
+    // TODO: Implement next_row_features logic
     
     // TODO: try to really understand clock enables vs. gating vs. if the macc_en is just treated as a logic variable
     // Discover: Do we need to gate adder arithmetic?
