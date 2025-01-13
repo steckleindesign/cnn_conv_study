@@ -38,7 +38,9 @@
 
 /*
 TODO: Determine proper bitwidths for adder stages, keeping data to 16 bits
-      Async reset
+      Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
+      Update of preload registers
+      feature RAM filling
       
 */
 
@@ -90,6 +92,13 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic         [7:0] feature_window [5][5];
     logic         [7:0] next_row_features [5][5];
     
+    typedef enum logic [2:0] {
+        IDLE, FILL, SHIFT
+    } preload_state_t;
+    preload_state_t preload_state, preload_next_state;
+    
+    logic [2:0] preload_addr;
+        
     /*
     5x5 Feature window
     
@@ -131,10 +140,15 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic [$clog2(ROW_END)-1:0] feat_row_ctr;
     logic [$clog2(COL_END)-1:0] feat_col_ctr;
     
-    logic               macc_en;
-    logic               macc_ready;
-    logic               lb_full;
-    logic               next_row;
+    // Flags
+    logic macc_en;
+    logic macc_ready;
+    logic lb_full;
+    logic next_row;
+    logic consume_features;
+    logic fill_next_start;
+    
+    // Adder Tree
     logic         [6:0] adder_tree_valid_sr[2:0];
     logic signed [15:0] adder1_stage1[NUM_FILTERS-1:0][14:0]; // 15 dsp outs
     logic signed [15:0] adder1_stage2[NUM_FILTERS-1:0][17:0]; // 8 adder outs from stage 1 + 10 dsp outs
@@ -198,11 +212,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             next_state = ONE;
     
-    always_ff @(posedge clk)
+    always_ff @(posedge i_clk)
     begin
         // Probably take out reset, although it may be a free signal,
         // the 6th input to the feature window mux LUTs
-        if (rst) begin
+        if (i_rst) begin
             for (int i = 0; i < FILTER_SIZE; i++) begin
                 for (int j = 0; j < FILTER_SIZE; j++) begin
                     feature_window[i][j]    <= 0;
@@ -225,7 +239,54 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         end
     end
     
-    // TODO: Implement next_row_features logic
+    always_ff @(posedge i_clk)
+        if (i_rst)
+            preload_state <= IDLE;
+        else
+            preload_state <= preload_next_state;
+    
+    always_comb begin
+        case(preload_state)
+            IDLE: begin
+                if (fill_next_start) preload_next_state = FILL;
+            end
+            FILL: begin
+                if (preload_addr[2]) preload_next_state = SHIFT;
+            end
+            SHIFT: begin
+                preload_next_state = IDLE;
+            end
+        endcase
+    end
+    
+    always_ff @(posedge i_clk)
+    begin
+        case(preload_state)
+            IDLE: begin
+                preload_addr <= 3'b0;
+            end
+            FILL: begin
+                // Logic here depends on implementation of feature RAM filling
+                // Will the data arriving into the feature RAMs fill the row 0 RAM?
+                // Or will the RAM values be shifted as incoming data populates the RAM,
+                // and therefore the features needed for the preload feature block will
+                // Already be in the bottom row RAM, which is the correct order for the features
+                // If the former, will need to make sure to shift up the values in RAM
+                // before the next row of convolutions
+                next_row_features[0][preload_addr] <= feature_rams[FILTER_SIZE-1][preload_addr];
+                preload_addr <= preload_addr + 1;
+            end
+            SHIFT: begin
+                for (int i = 0; i < FILTER_SIZE; i++) begin
+                    for (int j = 0; j < FILTER_SIZE-1; j++) begin
+                        next_row_features[j][i] <= next_row_features[j+1][i];
+                    end
+                    next_row_features[FILTER_SIZE-1][i] <= next_row_features[0][i];
+                end
+            end
+            // Do we need a default if we don't use all cases?
+        endcase
+    end
     
     // TODO: try to really understand clock enables vs. gating vs. if the macc_en is just treated as a logic variable
     // Discover: Do we need to gate adder arithmetic?
@@ -478,10 +539,13 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     */
     
     always_comb begin
-        next_row   = feat_col_ctr == COL_END-1 && state == FIVE;
+        next_row         = feat_col_ctr == COL_END-1 && state == FIVE;
+        // TODO: review below 2 flags... its probably earlier for consume_features
+        consume_features = feat_col_ctr == COL_END-5 && state == FOUR;
+        fill_next_start  = feat_col_ctr == COL_END-4 && state == FOUR;
         // TODO: Review full flag, is it right to set the flag at an almost full state?
-        lb_full    = lb_row_ctr == FILTER_SIZE && lb_col_ctr == COL_END-2;
-        macc_ready = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_START+FILTER_SIZE;
+        lb_full          = lb_row_ctr == FILTER_SIZE && lb_col_ctr == COL_END-2;
+        macc_ready       = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_START+FILTER_SIZE;
     end
     
     always_ff @(posedge i_clk)
@@ -502,6 +566,14 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 feat_col_ctr <= COL_START;
             end
         end
+        
+    /*
+        When feature counter is at 8, bring in new features
+        
+        There are 27 features for each row,
+        so 27 
+    
+    */
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
