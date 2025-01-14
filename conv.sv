@@ -540,9 +540,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     always_comb begin
         next_row         = feat_col_ctr == COL_END-1 && state == FIVE;
-        // TODO: review below 2 flags... its probably earlier for consume_features
-        consume_features = feat_col_ctr == COL_END-5 && state == FOUR;
-        fill_next_start  = feat_col_ctr == COL_END-4 && state == FOUR;
+        consume_features = feat_col_ctr == COL_START+10 && state == THREE;
+        // Can start filling next preload block 5 cycles after new row
+        // of features are consumed. It doesn't have to be exactly 5 cycles later,
+        // but the next start values need to be preloaded before the next row of convolutions begin
+        fill_next_start  = feat_col_ctr == COL_START+11 && state == THREE;
         // TODO: Review full flag, is it right to set the flag at an almost full state?
         lb_full          = lb_row_ctr == FILTER_SIZE && lb_col_ctr == COL_END-2;
         macc_ready       = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_START+FILTER_SIZE;
