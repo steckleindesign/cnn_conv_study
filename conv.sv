@@ -39,9 +39,6 @@
 /*
 TODO: Determine proper bitwidths for adder stages, keeping data to 16 bits
       Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
-      Update of preload registers
-      feature RAM filling
-      
 */
 
 module conv #( parameter NUM_FILTERS = 6 ) (
@@ -83,7 +80,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Overall there is 90x5 = 90 8x16-bit Distributed RAMs
     // 1 SLICEM can implement 2 8x16-bit Distruibuted RAMs
     // Hence, 45 slices will be used for the weight RAMs
-    // TODO: Which syntax is standard/better/preferred?
+    // Which syntax is standard/better/preferred?
     // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
     logic signed [15:0] weights [NUM_FILTERS][5][3][5];
     
@@ -97,39 +94,9 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     } preload_state_t;
     preload_state_t preload_state, preload_next_state;
     
-    logic [2:0] preload_addr;
+    logic         [2:0] preload_addr;
         
-    /*
-    5x5 Feature window
-    
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    
-    Input of each value "x" is output of 16-bit wide 2:1 MUX
-    
-    The inputs of the 2:1 MUX for the first 4 columns:
-        1. output of register in next column
-        2. output of corresponding feature in next_row_features block
-    
-    The inputs of the 2:1 MUX for the last column:
-        1. output of feature RAM
-        2. output of corresponding feature in next_row_features block
-    
-    */
-    
-    
-
-    // For height=5 filter, we only need to store 4 rows of pixel data
-    // For now we will starting MACC operations once line buffer is full
-    // Also we will use a line buffer with FILTER_SIZE rows, 5 rows in our case
-    // Again, we are not using the last 2 columns in this iteration (all 0's so its viable)
-    // For first synthesis effort, using FILTER_SIZE+1 rows, no need for input feature
-    // to be used in the logic, and for now we are not worried about memory
     logic         [7:0] line_buffer[FILTER_SIZE:0][INPUT_WIDTH-1:0];
-    // Indexed features to be used for * operation
     logic         [7:0] feature_operands[FILTER_SIZE-1:0][2:0];
     logic signed [15:0] weight_operands[NUM_FILTERS-1:0][FILTER_SIZE-1:0][2:0];
     
@@ -214,8 +181,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     always_ff @(posedge i_clk)
     begin
-        // Probably take out reset, although it may be a free signal,
-        // the 6th input to the feature window mux LUTs
+        // Check synthesis/implementation and verify reset is a free signal here
+        // regarding the 2:1 mux LUTs, I expect its the 6th input to the LUTs
         if (i_rst) begin
             for (int i = 0; i < FILTER_SIZE; i++) begin
                 for (int j = 0; j < FILTER_SIZE; j++) begin
@@ -259,6 +226,26 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         endcase
     end
     
+    /*
+    5x5 Feature window
+    
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    [x]  [x]  [x]  [x]  [x]
+    
+    Input of each value "x" is output of 16-bit wide 2:1 MUX
+    
+    The inputs of the 2:1 MUX for the first 4 columns:
+        1. output of register in next column
+        2. output of corresponding feature in next_row_features block
+    
+    The inputs of the 2:1 MUX for the last column:
+        1. output of feature RAM
+        2. output of corresponding feature in next_row_features block
+    */
+    
     always_ff @(posedge i_clk)
     begin
         case(preload_state)
@@ -292,6 +279,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Discover: Do we need to gate adder arithmetic?
     //           Or will having the valid out signal gate the adder logic
     //           and synthesize time multiplexing of carry chain logic?
+    // Use function and/or task to simplify this logic, its especially long
+    // for the full LeNet-5 implementation amongst other larger adder trees
     always_ff @(posedge i_clk) begin
         if (macc_en) begin
             for (int i = 0; i < NUM_FILTERS; i++) begin
@@ -394,6 +383,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 for (int k = 0; k < 3; k++)
                     mult_out[i][k*5+j] <= weight_operands[i][j][k] * feature_operands[j][k];
     
+    // DSP48E1 operands - simplify this
     always_comb begin
         case(state)
             ONE: begin
@@ -512,32 +502,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             adder_tree_valid_sr[1] <= { adder_tree_valid_sr[1][5:0], state == TWO  };
             adder_tree_valid_sr[2] <= { adder_tree_valid_sr[2][5:0], state == FOUR };
         end
-    
-    /*
-    Line buffer operation
-    Details: Line buffer height is equal to filter size
-             Buffer is filled on the fly
-    
-    fill lb enough to start macc operation
-    
-    once macc is enabled and the lb is totally full, start filling the first columns for future row
-    the operation would be shifting the column up, and setting the bottom row of the column to the input feature
-    
-    once has completed row and feature counter is below 15, fill the last columns of the lb
-    the operation would be shifting the column up, and setting the bottom row of the column to the input feature
-    
-    
-    1   2   3   4   5
-    6   7   8   9   10
-    11  12  13  14  15
-    
-    
-    16  17  18   4   5
-    6   7   8   9   10
-    11  12  13  14  15
-    
-    */
-    
+     
+    // Flags
     always_comb begin
         next_row         = feat_col_ctr == COL_END-1 && state == FIVE;
         consume_features = feat_col_ctr == COL_START+10 && state == THREE;
@@ -556,11 +522,9 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             feat_row_ctr        <= ROW_START;
             feat_col_ctr        <= COL_START;
             adder_tree_valid_sr <= '{default: 0};
-            // line_buffer         <= '{default: 0};
         end else begin
-            // Enable MACC operations when line buffer first fills.
-            // Could lower latency with a line buffer full enough flag,
-            // but that is not necessary for this study
+            // Enable MACC operations when feature RAMs are full enough
+            // for the first convolution window/kernel operation
             if (macc_ready)
                 macc_en <= 1;
             if (next_row) begin
@@ -568,14 +532,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 feat_col_ctr <= COL_START;
             end
         end
-        
-    /*
-        When feature counter is at 8, bring in new features
-        
-        There are 27 features for each row,
-        so 27 
-    
-    */
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
