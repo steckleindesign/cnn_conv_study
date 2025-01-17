@@ -7,7 +7,6 @@
         
     TODO:
         Testbenches
-        Post processing of conv layer for easier pinout
         weight and bias files
         
 */
@@ -17,10 +16,13 @@
 localparam CONV_FILTERS = 6;
 
 module conv_study_top (
-    input clk,
-    input rst,
+    input                clk,
+    input                rst,
     input          [7:0] feature_in,
-    output signed [15:0] features_out[CONV_FILTERS-1:0]
+    output signed [15:0] feature_out,
+    
+    output [1:0] led,
+    output led_r, led_g, led_b
 );
 
     logic               line_buf_full;
@@ -48,13 +50,24 @@ module conv_study_top (
                        .o_features(output_features),
                        .o_buffer_full(line_buf_full));
     
-    feature_map_stream #(.FEATURE_WIDTH(16),
-                         .FEATURE_DEPTH(6))
-                          feature_map_stream_inst (.clk(clk),           
-                                                   .features_valid(output_features_valid),
-                                                   .features_in(output_features),
-                                                   .features_out(features_out));
+    post_processing #(.FEATURE_WIDTH(6),
+                      .FEATURES_DEPTH(CONV_FILTERS))
+                       post_processing_inst (.clk(clk),
+                                             .features_valid(output_features_valid),
+                                             .features_in(output_features),
+                                             .feature_out(feature_out));
     
-    // assign features_out = feature_stream_out;
+//    feature_map_stream #(.FEATURE_WIDTH(16),
+//                         .FEATURE_DEPTH(6))
+//                          feature_map_stream_inst (.clk(clk),           
+//                                                   .features_valid(output_features_valid),
+//                                                   .features_in(output_features),
+//                                                   .features_out(features_out));
+    
+    
+    assign led = 2'b11;
+    assign led_r = 1;
+    assign led_g = 0;
+    assign led_b = 0;
 
 endmodule
