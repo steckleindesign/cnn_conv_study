@@ -47,7 +47,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     input  logic               i_feature_valid,
     input  logic         [7:0] i_feature,
     output logic               o_feature_valid,
-    output logic signed [15:0] o_features[NUM_FILTERS-1:0],
+    output logic signed [15:0] o_features[0:NUM_FILTERS-1],
     output logic               o_buffer_full
 );
 
@@ -67,11 +67,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Initialize trainable parameters
     // Weights
     (* rom_style = "block" *) logic signed [15:0]
-    weights [NUM_FILTERS-1:0][FILTER_SIZE-1:0][FILTER_SIZE-1:0];
+    weights [0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     initial $readmemb(WEIGHTS_FILE, weights);
     // Biases
     (* rom_style = "block" *) logic signed [15:0]
-    biases [NUM_FILTERS-1:0];
+    biases [0:NUM_FILTERS-1];
     initial $readmemb(BIASES_FILE, biases);
     
     // Weight ROMs
@@ -96,9 +96,9 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     logic         [2:0] preload_addr;
         
-    logic         [7:0] line_buffer[FILTER_SIZE:0][INPUT_WIDTH-1:0];
-    logic         [7:0] feature_operands[FILTER_SIZE-1:0][2:0];
-    logic signed [15:0] weight_operands[NUM_FILTERS-1:0][FILTER_SIZE-1:0][2:0];
+    logic         [7:0] line_buffer[0:FILTER_SIZE][0:INPUT_WIDTH-1];
+    logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
+    logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:2];
     
     // Line buffer location
     logic [$clog2(ROW_END)-1:0] lb_row_ctr;
@@ -117,31 +117,31 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     // Adder Tree
     logic         [6:0] adder_tree_valid_sr[2:0];
-    logic signed [15:0] adder1_stage1[NUM_FILTERS-1:0][14:0]; // 15 dsp outs
-    logic signed [15:0] adder1_stage2[NUM_FILTERS-1:0][17:0]; // 8 adder outs from stage 1 + 10 dsp outs
-    logic signed [15:0] adder1_stage3[NUM_FILTERS-1:0][8:0];  // 9 adder outs from stage 2
-    logic signed [15:0] adder1_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
-    logic signed [15:0] adder1_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
-    logic signed [15:0] adder1_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [15:0] adder1_result[NUM_FILTERS-1:0];       // adder tree 1 result
-    logic signed [15:0] adder2_stage1[NUM_FILTERS-1:0][4:0];  // 5 dsp outs
-    logic signed [15:0] adder2_stage2[NUM_FILTERS-1:0][17:0]; // 3 adder outs from stage 1 + 15 dsp outs
-    logic signed [15:0] adder2_stage3[NUM_FILTERS-1:0][13:0]; // 9 adder outs from stage 2 + 5 dsp outs
-    logic signed [15:0] adder2_stage4[NUM_FILTERS-1:0][6:0];  // 7 adder outs from stage 3
-    logic signed [15:0] adder2_stage5[NUM_FILTERS-1:0][3:0];  // 4 adder outs from stage 4
-    logic signed [15:0] adder2_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [15:0] adder2_result[NUM_FILTERS-1:0];       // adder tree 2 result
-    logic signed [15:0] adder3_stage1[NUM_FILTERS-1:0][9:0];  // 10 dsp outs
-    logic signed [15:0] adder3_stage2[NUM_FILTERS-1:0][19:0]; // 5 adder outs from stage 1 + 15 dsp outs
-    logic signed [15:0] adder3_stage3[NUM_FILTERS-1:0][9:0];  // 10 adder outs from stage 2
-    logic signed [15:0] adder3_stage4[NUM_FILTERS-1:0][4:0];  // 5 adder outs from stage 3
-    logic signed [15:0] adder3_stage5[NUM_FILTERS-1:0][2:0];  // 3 adder outs from stage 4
-    logic signed [15:0] adder3_stage6[NUM_FILTERS-1:0][1:0];  // 2 adder outs from stage 5
-    logic signed [15:0] adder3_result[NUM_FILTERS-1:0];       // adder tree 3 result
-    logic signed [15:0] macc_acc[NUM_FILTERS-1:0];
+    logic signed [15:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
+    logic signed [15:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
+    logic signed [15:0] adder1_stage3[0:NUM_FILTERS-1][0:8];  // 9 adder outs from stage 2
+    logic signed [15:0] adder1_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
+    logic signed [15:0] adder1_stage5[0:NUM_FILTERS-1][0:2];  // 3 adder outs from stage 4
+    logic signed [15:0] adder1_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
+    logic signed [15:0] adder1_result[0:NUM_FILTERS-1];       // adder tree 1 result
+    logic signed [15:0] adder2_stage1[0:NUM_FILTERS-1][0:4];  // 5 dsp outs
+    logic signed [15:0] adder2_stage2[0:NUM_FILTERS-1][0:17]; // 3 adder outs from stage 1 + 15 dsp outs
+    logic signed [15:0] adder2_stage3[0:NUM_FILTERS-1][0:13]; // 9 adder outs from stage 2 + 5 dsp outs
+    logic signed [15:0] adder2_stage4[0:NUM_FILTERS-1][0:6];  // 7 adder outs from stage 3
+    logic signed [15:0] adder2_stage5[0:NUM_FILTERS-1][0:3];  // 4 adder outs from stage 4
+    logic signed [15:0] adder2_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
+    logic signed [15:0] adder2_result[0:NUM_FILTERS-1];       // adder tree 2 result
+    logic signed [15:0] adder3_stage1[0:NUM_FILTERS-1][0:9];  // 10 dsp outs
+    logic signed [15:0] adder3_stage2[0:NUM_FILTERS-1][0:19]; // 5 adder outs from stage 1 + 15 dsp outs
+    logic signed [15:0] adder3_stage3[0:NUM_FILTERS-1][0:9];  // 10 adder outs from stage 2
+    logic signed [15:0] adder3_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
+    logic signed [15:0] adder3_stage5[0:NUM_FILTERS-1][0:2];  // 3 adder outs from stage 4
+    logic signed [15:0] adder3_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
+    logic signed [15:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
+    logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
     // TODO: Flatten
-    logic signed [15:0] mult_out[NUM_FILTERS-1:0][FILTER_SIZE*3-1:0];
+    logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
     
     typedef enum logic [2:0] {
         ONE, TWO, THREE, FOUR, FIVE
