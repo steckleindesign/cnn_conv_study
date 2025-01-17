@@ -30,9 +30,9 @@ module conv_study_top (
     logic         [7:0] conv1_feature_in;
     
     logic               output_features_valid;
-    logic signed [15:0] output_features[CONV_FILTERS-1:0];
+    logic signed [15:0] output_features[CONV_FILTERS];
     
-    logic        [15:0] feature_stream_out[CONV_FILTERS-1:0];
+    // logic        [15:0] feature_stream_out[CONV_FILTERS-1];
     
     feature_buf feature_buf_inst (.clk(clk),
                                   .rst(rst),
@@ -50,7 +50,7 @@ module conv_study_top (
                        .o_features(output_features),
                        .o_buffer_full(line_buf_full));
     
-    post_processing #(.FEATURE_WIDTH(6),
+    post_processing #(.FEATURE_WIDTH(16),
                       .FEATURES_DEPTH(CONV_FILTERS))
                        post_processing_inst (.clk(clk),
                                              .features_valid(output_features_valid),
