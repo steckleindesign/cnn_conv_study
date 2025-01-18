@@ -39,6 +39,7 @@
 /*
 TODO: Determine proper bitwidths for adder stages, keeping data to 16 bits
       Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
+      Understand clock gating vs. clock enables vs. if macc_en is treated as a logic variable
 */
 
 module conv #( parameter NUM_FILTERS = 6 ) (
@@ -57,8 +58,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     localparam        INPUT_WIDTH   = 31;
     localparam        INPUT_HEIGHT  = 31;
     localparam        FILTER_SIZE   = 5;
-    localparam        OUTPUT_HEIGHT = 27;
-    localparam        OUTPUT_WIDTH  = 27;
     localparam        ROW_START     = 2;
     localparam        ROW_END       = 29;
     localparam        COL_START     = 2;
@@ -83,29 +82,39 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Which syntax is standard/better/preferred?
     // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
     logic signed [15:0] weights [NUM_FILTERS][5][3][5];
+    logic signed [15:0] biases  [NUM_FILTERS];
     
+    // Want to synth distributed RAMs for feature buffers,
+    // These feature RAMs are essentially line buffers
     logic         [7:0] feature_rams [FILTER_SIZE][INPUT_WIDTH];
-        
+    // The actual feature window to be multiplied by the filter kernel
     logic         [7:0] feature_window [5][5];
-    logic         [7:0] next_row_features [5][5];
+    // We buffer the initial feature window of the next row
+    // It loads during convolution operation of the preceeding row
+    logic         [7:0] next_initial_feature_window [5][5];
     
+    // FSM for preloading the initial feature window of the next row
     typedef enum logic [2:0] {
         IDLE, FILL, SHIFT
     } preload_state_t;
     preload_state_t preload_state, preload_next_state;
+    // Column location of the preload operation, treated as the address to the feature RAMs
+    // for the sake of filling the initial feauture window of the next row
+    logic         [2:0] preload_col;
     
-    logic         [2:0] preload_addr;
-        
-    logic         [7:0] line_buffer[0:FILTER_SIZE][0:INPUT_WIDTH-1];
+    // Signals holding the DSP48E1 operands, used for readability
     logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
     logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:2];
+    // All 90 DSP48E1 outputs
+    logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
     
-    // Line buffer location
-    logic [$clog2(ROW_END)-1:0] lb_row_ctr;
-    logic [$clog2(COL_END)-1:0] lb_col_ctr;
-    // Feature conv location
-    logic [$clog2(ROW_END)-1:0] feat_row_ctr;
-    logic [$clog2(COL_END)-1:0] feat_col_ctr;
+    // Feature RAM location
+    logic [$clog2(ROW_END)-1:0] fram_row_ctr;
+    logic [$clog2(COL_END)-1:0] fram_col_ctr;
+    // Convolution Feature location
+    // Is conv row cnt needed?
+    logic [$clog2(ROW_END)-1:0] conv_row_ctr;
+    logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
     // Flags
     logic macc_en;
@@ -140,9 +149,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic signed [15:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
-    // TODO: Flatten
-    logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
-    
+    // Convolution FSM, controls DSP48E1 time multiplexing,
+    // and convolution feature counters
     typedef enum logic [2:0] {
         ONE, TWO, THREE, FOUR, FIVE
     } state_t;
@@ -178,56 +186,9 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             endcase
         else
             next_state = ONE;
-    
-    always_ff @(posedge i_clk)
-    begin
-        // Check synthesis/implementation and verify reset is a free signal here
-        // regarding the 2:1 mux LUTs, I expect its the 6th input to the LUTs
-        if (i_rst) begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE; j++) begin
-                    feature_window[i][j]    <= 0;
-                    next_row_features[i][j] <= 0;
-                end
-            end
-        end else if (next_row) begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE; j++) begin
-                    feature_window[i][j] <= next_row_features[i][j] <= 0;
-                end
-            end
-        end else begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE-1; j++) begin
-                    feature_window[i][j] <= feature_window[i][j+1];
-                end
-                feature_window[i][FILTER_SIZE-1] <= feature_rams[i][feat_col_ctr];
-            end
-        end
-    end
-    
-    always_ff @(posedge i_clk)
-        if (i_rst)
-            preload_state <= IDLE;
-        else
-            preload_state <= preload_next_state;
-    
-    always_comb begin
-        case(preload_state)
-            IDLE: begin
-                if (fill_next_start) preload_next_state = FILL;
-            end
-            FILL: begin
-                if (preload_addr[2]) preload_next_state = SHIFT;
-            end
-            SHIFT: begin
-                preload_next_state = IDLE;
-            end
-        endcase
-    end
-    
+        
     /*
-    5x5 Feature window
+    5x5 Feature window logic
     
     [x]  [x]  [x]  [x]  [x]
     [x]  [x]  [x]  [x]  [x]
@@ -248,9 +209,61 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     always_ff @(posedge i_clk)
     begin
+        // Check synthesis/implementation and verify reset is a free signal here
+        // regarding the 2:1 mux LUTs, I expect its the 6th input to the LUTs
+        if (i_rst) begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE; j++) begin
+                    feature_window[i][j]    <= 0;
+                    next_initial_feature_window[i][j] <= 0;
+                end
+            end
+            // Should we set next_row at macc_en rising edge?
+            // So that the initial feature window of the first row is loaded in?
+        end else if (next_row) begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE; j++) begin
+                    feature_window[i][j] <= next_initial_feature_window[i][j];
+                end
+            end
+        end else begin
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE-1; j++) begin
+                    feature_window[i][j] <= feature_window[i][j+1];
+                end
+                feature_window[i][FILTER_SIZE-1] <= feature_rams[i][conv_col_ctr];
+            end
+        end
+    end
+    
+    // Preload next initial feature window FSM
+    always_ff @(posedge i_clk)
+        if (i_rst)
+            preload_state <= IDLE;
+        else
+            preload_state <= preload_next_state;
+    
+    always_comb begin
         case(preload_state)
             IDLE: begin
-                preload_addr <= 3'b0;
+                if (fill_next_start) preload_next_state = FILL;
+            end
+            FILL: begin
+                if (preload_col[2]) preload_next_state = SHIFT;
+            end
+            SHIFT: begin
+                preload_next_state = IDLE;
+            end
+        endcase
+    end
+    
+    // Next initial feature window actual filling logic
+    // Need to handle first row initial feature window
+    always_ff @(posedge i_clk)
+    begin
+        case(preload_state)
+            IDLE: begin
+                preload_col <= 3'b0;
             end
             FILL: begin
                 // Logic here depends on implementation of feature RAM filling
@@ -260,27 +273,23 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 // Already be in the bottom row RAM, which is the correct order for the features
                 // If the former, will need to make sure to shift up the values in RAM
                 // before the next row of convolutions
-                next_row_features[0][preload_addr] <= feature_rams[FILTER_SIZE-1][preload_addr];
-                preload_addr <= preload_addr + 1;
+                next_initial_feature_window[0][preload_col] <= feature_rams[FILTER_SIZE-1][preload_col];
+                preload_col <= preload_col + 1;
             end
             SHIFT: begin
                 for (int i = 0; i < FILTER_SIZE; i++) begin
-                    for (int j = 0; j < FILTER_SIZE-1; j++) begin
-                        next_row_features[j][i] <= next_row_features[j+1][i];
-                    end
-                    next_row_features[FILTER_SIZE-1][i] <= next_row_features[0][i];
+                    for (int j = 0; j < FILTER_SIZE-1; j++)
+                        next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
+                    next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
                 end
             end
             // Do we need a default if we don't use all cases?
+            // There is a latch in synth, check if related
         endcase
     end
     
-    // TODO: try to really understand clock enables vs. gating vs. if the macc_en is just treated as a logic variable
-    // Discover: Do we need to gate adder arithmetic?
-    //           Or will having the valid out signal gate the adder logic
-    //           and synthesize time multiplexing of carry chain logic?
-    // Use function and/or task to simplify this logic, its especially long
-    // for the full LeNet-5 implementation amongst other larger adder trees
+    // TODO: Use function and/or task to simplify this logic, its especially long
+    //       for the full LeNet-5 implementation amongst other larger adder trees
     always_ff @(posedge i_clk) begin
         if (macc_en) begin
             for (int i = 0; i < NUM_FILTERS; i++) begin
@@ -366,8 +375,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         end
     end
     
+    // Would casex block be better here?
     always_comb
-        // Would casex block be better here?
         if (adder_tree_valid_sr[0][6])
             macc_acc = adder1_result;
         else if (adder_tree_valid_sr[1][6])
@@ -388,85 +397,85 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         case(state)
             ONE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][feat_col_ctr-2];
+                    feature_operands[i][0] = line_buffer[i][conv_col_ctr-2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][0];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
+                    feature_operands[i][1] = line_buffer[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][1];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][feat_col_ctr];
+                    feature_operands[i][2] = line_buffer[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][2];
             end
             TWO: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][feat_col_ctr+1];
+                    feature_operands[i][0] = line_buffer[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][3];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][feat_col_ctr+2];
+                    feature_operands[i][1] = line_buffer[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][4];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][feat_col_ctr-1];
+                    feature_operands[i][2] = line_buffer[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][0];
             end
             THREE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][feat_col_ctr-1];
+                    feature_operands[i][0] = line_buffer[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][1];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][feat_col_ctr];
+                    feature_operands[i][1] = line_buffer[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][2];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][feat_col_ctr+1];
+                    feature_operands[i][2] = line_buffer[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][3];
             end
             FOUR: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][feat_col_ctr+2];
+                    feature_operands[i][0] = line_buffer[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][4];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][feat_col_ctr-1];
+                    feature_operands[i][1] = line_buffer[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][0];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][feat_col_ctr];
+                    feature_operands[i][2] = line_buffer[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][1];
             end
             FIVE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][feat_col_ctr];
+                    feature_operands[i][0] = line_buffer[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][2];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][feat_col_ctr+1];
+                    feature_operands[i][1] = line_buffer[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][3];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][feat_col_ctr+2];
+                    feature_operands[i][2] = line_buffer[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][4];
@@ -483,7 +492,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 TWO: begin
                     // 10 -> adder tree 1,
                     // 5  -> adder tree 2
-                    feat_col_ctr <= feat_col_ctr + 1;
+                    conv_col_ctr <= conv_col_ctr + 1;
                 end
                 THREE: begin
                     // 15 -> adder tree 2
@@ -491,11 +500,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 FOUR: begin
                     // 5  -> adder tree 2
                     // 10 -> adder tree 3
-                    feat_col_ctr <= feat_col_ctr + 1;
+                    conv_col_ctr <= conv_col_ctr + 1;
                 end
                 FIVE: begin
                     // 15 -> adder tree 3
-                    feat_col_ctr <= feat_col_ctr + 1;
+                    conv_col_ctr <= conv_col_ctr + 1;
                 end
             endcase
             adder_tree_valid_sr[0] <= { adder_tree_valid_sr[0][5:0], state == ONE  };
@@ -505,22 +514,22 @@ module conv #( parameter NUM_FILTERS = 6 ) (
      
     // Flags
     always_comb begin
-        next_row         = feat_col_ctr == COL_END-1 && state == FIVE;
-        consume_features = feat_col_ctr == COL_START+10 && state == THREE;
+        next_row         = conv_col_ctr == COL_END-1 && state == FIVE;
+        consume_features = conv_col_ctr == COL_START+10 && state == THREE;
         // Can start filling next preload block 5 cycles after new row
         // of features are consumed. It doesn't have to be exactly 5 cycles later,
         // but the next start values need to be preloaded before the next row of convolutions begin
-        fill_next_start  = feat_col_ctr == COL_START+11 && state == THREE;
+        fill_next_start  = conv_col_ctr == COL_START+11 && state == THREE;
         // TODO: Review full flag, is it right to set the flag at an almost full state?
-        lb_full          = lb_row_ctr == FILTER_SIZE && lb_col_ctr == COL_END-2;
-        macc_ready       = lb_row_ctr == FILTER_SIZE-1 && lb_col_ctr == COL_START+FILTER_SIZE;
+        lb_full          = fram_row_ctr == FILTER_SIZE && fram_col_ctr == COL_END-2;
+        macc_ready       = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
     end
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
             macc_en             <= 0;
-            feat_row_ctr        <= ROW_START;
-            feat_col_ctr        <= COL_START;
+            conv_row_ctr        <= ROW_START;
+            conv_col_ctr        <= COL_START;
             adder_tree_valid_sr <= '{default: 0};
         end else begin
             // Enable MACC operations when feature RAMs are full enough
@@ -528,28 +537,28 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             if (macc_ready)
                 macc_en <= 1;
             if (next_row) begin
-                feat_row_ctr <= feat_row_ctr + 1;
-                feat_col_ctr <= COL_START;
+                conv_row_ctr <= conv_row_ctr + 1;
+                conv_col_ctr <= COL_START;
             end
         end
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            lb_row_ctr <= ROW_START;
-            lb_col_ctr <= COL_START;
+            fram_row_ctr <= ROW_START;
+            fram_col_ctr <= COL_START;
         end else
             if (i_feature_valid) begin
-                lb_col_ctr <= lb_col_ctr + 1;
-                if (lb_col_ctr == COL_END-1) begin
-                    lb_col_ctr <= COL_START;
-                    lb_row_ctr <= lb_row_ctr + 1;
+                fram_col_ctr <= fram_col_ctr + 1;
+                if (fram_col_ctr == COL_END-1) begin
+                    fram_col_ctr <= COL_START;
+                    fram_row_ctr <= fram_row_ctr + 1;
                 end
-                line_buffer[lb_row_ctr][lb_col_ctr] <= i_feature;
+                line_buffer[fram_row_ctr][fram_col_ctr] <= i_feature;
             end else if (next_row) begin
                 for (int i = 2; i < COL_END; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         line_buffer[j][i] <= line_buffer[j+1][i];
-                lb_col_ctr <= COL_START;
+                fram_col_ctr <= COL_START;
             end
     
     always_comb
