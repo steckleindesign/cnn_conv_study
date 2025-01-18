@@ -212,25 +212,21 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         // Check synthesis/implementation and verify reset is a free signal here
         // regarding the 2:1 mux LUTs, I expect its the 6th input to the LUTs
         if (i_rst) begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
+            for (int i = 0; i < FILTER_SIZE; i++)
                 for (int j = 0; j < FILTER_SIZE; j++) begin
-                    feature_window[i][j]    <= 0;
+                    feature_window[i][j]              <= 0;
                     next_initial_feature_window[i][j] <= 0;
                 end
-            end
             // Should we set next_row at macc_en rising edge?
             // So that the initial feature window of the first row is loaded in?
         end else if (next_row) begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE; j++) begin
+            for (int i = 0; i < FILTER_SIZE; i++)
+                for (int j = 0; j < FILTER_SIZE; j++)
                     feature_window[i][j] <= next_initial_feature_window[i][j];
-                end
-            end
         end else begin
             for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE-1; j++) begin
+                for (int j = 0; j < FILTER_SIZE-1; j++)
                     feature_window[i][j] <= feature_window[i][j+1];
-                end
                 feature_window[i][FILTER_SIZE-1] <= feature_rams[i][conv_col_ctr];
             end
         end
@@ -386,96 +382,99 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             macc_acc = macc_acc;
     
+    // DSP48E1 operation
+    // How do we want to go about pipelining
     always_ff @(posedge i_clk)
         for (int i = 0; i < NUM_FILTERS; i++)
             for (int j = 0; j < 5; j++)
                 for (int k = 0; k < 3; k++)
-                    mult_out[i][k*5+j] <= weight_operands[i][j][k] * feature_operands[j][k];
+                    // Signed output only when both operands are signed
+                    mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
     
     // DSP48E1 operands - simplify this
     always_comb begin
         case(state)
             ONE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][conv_col_ctr-2];
+                    feature_operands[i][0] = feature_window[i][conv_col_ctr-2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][0];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][conv_col_ctr-1];
+                    feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][1];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][conv_col_ctr];
+                    feature_operands[i][2] = feature_window[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][2];
             end
             TWO: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][conv_col_ctr+1];
+                    feature_operands[i][0] = feature_window[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][3];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][conv_col_ctr+2];
+                    feature_operands[i][1] = feature_window[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][4];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][conv_col_ctr-1];
+                    feature_operands[i][2] = feature_window[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][0];
             end
             THREE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][conv_col_ctr-1];
+                    feature_operands[i][0] = feature_window[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][1];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][conv_col_ctr];
+                    feature_operands[i][1] = feature_window[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][2];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][conv_col_ctr+1];
+                    feature_operands[i][2] = feature_window[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][3];
             end
             FOUR: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][conv_col_ctr+2];
+                    feature_operands[i][0] = feature_window[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][4];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][conv_col_ctr-1];
+                    feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][0];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][conv_col_ctr];
+                    feature_operands[i][2] = feature_window[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][1];
             end
             FIVE: begin
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][0] = line_buffer[i][conv_col_ctr];
+                    feature_operands[i][0] = feature_window[i][conv_col_ctr];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][0] = weights[i][j][2];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][1] = line_buffer[i][conv_col_ctr+1];
+                    feature_operands[i][1] = feature_window[i][conv_col_ctr+1];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][1] = weights[i][j][3];
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_operands[i][2] = line_buffer[i][conv_col_ctr+2];
+                    feature_operands[i][2] = feature_window[i][conv_col_ctr+2];
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
                         weight_operands[i][j][2] = weights[i][j][4];
@@ -553,11 +552,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                     fram_col_ctr <= COL_START;
                     fram_row_ctr <= fram_row_ctr + 1;
                 end
-                line_buffer[fram_row_ctr][fram_col_ctr] <= i_feature;
+                feature_window[fram_row_ctr][fram_col_ctr] <= i_feature;
             end else if (next_row) begin
                 for (int i = 2; i < COL_END; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        line_buffer[j][i] <= line_buffer[j+1][i];
+                        feature_window[j][i] <= feature_window[j+1][i];
                 fram_col_ctr <= COL_START;
             end
     
