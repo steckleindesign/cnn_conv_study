@@ -7,7 +7,6 @@
         
     TODO:
         Testbenches
-        weight and bias files
         
 */
 
