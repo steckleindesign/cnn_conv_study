@@ -7,6 +7,9 @@
         
     TODO:
         Testbenches
+        - feature_buf
+        - conv
+        - post_processing
         
 */
 
@@ -33,12 +36,12 @@ module conv_study_top (
     
     // logic        [15:0] feature_stream_out[CONV_FILTERS-1];
     
-    feature_buf feature_buf_inst (.clk(clk),
-                                  .rst(rst),
-                                  .feature_in(feature_in),
-                                  .hold_data(line_buf_full),
-                                  .feature_valid(conv1_feat_in_valid),
-                                  .feature_out(conv1_feature_in));
+    feature_fwft feature_fwft_inst (.clk(clk),
+                                    .rst(rst),
+                                    .feature_in(feature_in),
+                                    .rd_en(line_buf_full),
+                                    .feature_valid(conv1_feat_in_valid),
+                                    .feature_out(conv1_feature_in));
 
     conv #(.NUM_FILTERS(CONV_FILTERS))
             conv_inst (.i_clk(clk),
@@ -55,14 +58,6 @@ module conv_study_top (
                                              .features_valid(output_features_valid),
                                              .features_in(output_features),
                                              .feature_out(feature_out));
-    
-//    feature_map_stream #(.FEATURE_WIDTH(16),
-//                         .FEATURE_DEPTH(6))
-//                          feature_map_stream_inst (.clk(clk),           
-//                                                   .features_valid(output_features_valid),
-//                                                   .features_in(output_features),
-//                                                   .features_out(features_out));
-    
     
     assign led = 2'b11;
     assign led_r = 1;
