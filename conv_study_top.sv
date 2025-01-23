@@ -23,8 +23,8 @@ module conv_study_top (
     input          [7:0] feature_in,
     output signed [15:0] feature_out,
     
-    output [1:0] led,
-    output led_r, led_g, led_b
+    output         [1:0] led,
+    output               led_r, led_g, led_b
 );
 
     logic               line_buf_full;
@@ -33,15 +33,13 @@ module conv_study_top (
     
     logic               output_features_valid;
     logic signed [15:0] output_features[CONV_FILTERS];
-    
-    // logic        [15:0] feature_stream_out[CONV_FILTERS-1];
-    
+        
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),
-                                    .feature_in(feature_in),
+                                    .in_feature(feature_in),
                                     .rd_en(line_buf_full),
                                     .feature_valid(conv1_feat_in_valid),
-                                    .feature_out(conv1_feature_in));
+                                    .out_feature(conv1_feature_in));
 
     conv #(.NUM_FILTERS(CONV_FILTERS))
             conv_inst (.i_clk(clk),

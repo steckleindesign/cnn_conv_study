@@ -9,12 +9,15 @@ module feature_fwft(
     input        rst,
     input        rd_en,
     input  [7:0] in_feature,
+    output       feature_valid,
     output [7:0] out_feature
 );
 
     localparam FIFO_WIDTH = 8;
     localparam FIFO_DEPTH = 27*27;
     localparam FIFO_ADDRW = $clog2(FIFO_DEPTH);
+    
+    logic valid;
     
     logic [FIFO_WIDTH-1:0] fifo_data [0:FIFO_DEPTH-1];
     
@@ -26,15 +29,18 @@ module feature_fwft(
         if (rst) begin
             fifo_rd_addr <= 'b0;
             fifo_wr_addr <= 'b0;
+            valid        <= 0;
         end else begin
             if (fifo_wr_addr < FIFO_DEPTH)
                 fifo_data[fifo_wr_addr] <= in_feature;
-            
             if (rd_en)
                 fifo_rd_addr <= fifo_rd_addr + 1;
+            
+            valid = fifo_rd_addr == FIFO_DEPTH ? 0 : 1;
         end
     end
     
-    assign feature_out = fifo_data[fifo_rd_addr];
+    assign feature_valid = valid;
+    assign out_feature   = fifo_data[fifo_rd_addr];
 
 endmodule

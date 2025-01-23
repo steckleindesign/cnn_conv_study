@@ -63,16 +63,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     localparam        COL_START     = 2;
     localparam        COL_END       = 29;
     
-    // Initialize trainable parameters
-    // Weights
-    (* rom_style = "block" *) logic signed [15:0]
-    weights [0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:FILTER_SIZE-1];
-    initial $readmemb(WEIGHTS_FILE, weights);
-    // Biases
-    (* rom_style = "block" *) logic signed [15:0]
-    biases [0:NUM_FILTERS-1];
-    initial $readmemb(BIASES_FILE, biases);
-    
     // Weight ROMs
     // 90 distributed RAMs -> 1 per DSP48E1
     // 16-bit signed data x 6 filters x 5 rows x 3 columns x 5 deep
@@ -81,8 +71,15 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Hence, 45 slices will be used for the weight RAMs
     // Which syntax is standard/better/preferred?
     // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
-    logic signed [15:0] weights [NUM_FILTERS][5][3][5];
-    logic signed [15:0] biases  [NUM_FILTERS];
+    // Initialize trainable parameters
+    // Weights
+    // (* rom_style = "block" *)
+    logic signed [15:0] weights [0:NUM_FILTERS-1][0:4][0:2][0:4];
+    initial $readmemb("weights.mem", weights);
+    // Biases
+    // (* rom_style = "block" *)
+    logic signed [15:0] biases [0:NUM_FILTERS-1];
+    initial $readmemb("biases.mem", biases);
     
     // Want to synth distributed RAMs for feature buffers,
     // These feature RAMs are essentially line buffers
