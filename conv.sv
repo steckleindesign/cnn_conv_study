@@ -55,6 +55,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Hardcode frame dimensions in local params
     localparam string WEIGHTS_FILE  = "weights.mem";
     localparam string BIASES_FILE   = "biases.mem";
+    localparam        NUM_DSP48E1   = 90;
     localparam        INPUT_WIDTH   = 31;
     localparam        INPUT_HEIGHT  = 31;
     localparam        FILTER_SIZE   = 5;
@@ -67,19 +68,17 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // 90 distributed RAMs -> 1 per DSP48E1
     // 16-bit signed data x 6 filters x 5 rows x 3 columns x 5 deep
     // Overall there is 90x5 = 90 8x16-bit Distributed RAMs
-    // 1 SLICEM can implement 2 8x16-bit Distruibuted RAMs
+    // One SLICEM can implement 2 8x16-bit Distruibuted RAMs
     // Hence, 45 slices will be used for the weight RAMs
-    // Which syntax is standard/better/preferred?
-    // logic signed [15:0] weights [0:5][0:4][0:2][0:4];
     // Initialize trainable parameters
     // Weights
     // (* rom_style = "block" *)
     logic signed [15:0] weights [0:NUM_FILTERS-1][0:4][0:2][0:4];
-    initial $readmemb("weights.mem", weights);
+    initial $readmemb(WEIGHTS_FILE, weights);
     // Biases
     // (* rom_style = "block" *)
     logic signed [15:0] biases [0:NUM_FILTERS-1];
-    initial $readmemb("biases.mem", biases);
+    initial $readmemb(BIASES_FILE, biases);
     
     // Want to synth distributed RAMs for feature buffers,
     // These feature RAMs are essentially line buffers
@@ -183,26 +182,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             endcase
         else
             next_state = ONE;
-        
-    /*
-    5x5 Feature window logic
-    
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    [x]  [x]  [x]  [x]  [x]
-    
-    Input of each value "x" is output of 16-bit wide 2:1 MUX
-    
-    The inputs of the 2:1 MUX for the first 4 columns:
-        1. output of register in next column
-        2. output of corresponding feature in next_row_features block
-    
-    The inputs of the 2:1 MUX for the last column:
-        1. output of feature RAM
-        2. output of corresponding feature in next_row_features block
-    */
     
     always_ff @(posedge i_clk)
     begin
@@ -392,89 +371,84 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     always_comb begin
         case(state)
             ONE: begin
-                for (int i = 0; i < FILTER_SIZE; i++)
+                // Features
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_operands[i][0] = feature_window[i][conv_col_ctr-2];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][0] = weights[i][j][0];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][1] = weights[i][j][1];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = feature_window[i][conv_col_ctr];
+                end
+                // Weights
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][2] = weights[i][j][2];
+                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
+                            weight_operands[i][j][k][0] = weights[i][j][k][0];       
+                            weight_operands[i][j][k][1] = weights[i][j][k][1];
+                            weight_operands[i][j][k][2] = weights[i][j][k][2];
+                        end
             end
             TWO: begin
-                for (int i = 0; i < FILTER_SIZE; i++)
+                // Features
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_operands[i][0] = feature_window[i][conv_col_ctr+1];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][0] = weights[i][j][3];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = feature_window[i][conv_col_ctr+2];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][1] = weights[i][j][4];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = feature_window[i][conv_col_ctr-1];
+                end
+                // Weights
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][2] = weights[i][j][0];
+                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
+                            weight_operands[i][j][k][0] = weights[i][j][k][3];
+                            weight_operands[i][j][k][1] = weights[i][j][k][4];
+                            weight_operands[i][j][k][2] = weights[i][j][k][0];
+                        end
             end
             THREE: begin
-                for (int i = 0; i < FILTER_SIZE; i++)
+                // Features
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_operands[i][0] = feature_window[i][conv_col_ctr-1];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][0] = weights[i][j][1];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = feature_window[i][conv_col_ctr];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][1] = weights[i][j][2];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = feature_window[i][conv_col_ctr+1];
+                end
+                // Weights
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][2] = weights[i][j][3];
+                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
+                            weight_operands[i][j][k][0] = weights[i][j][k][1];
+                            weight_operands[i][j][k][1] = weights[i][j][k][2];
+                            weight_operands[i][j][k][2] = weights[i][j][k][3];
+                        end
             end
             FOUR: begin
-                for (int i = 0; i < FILTER_SIZE; i++)
+                // Features
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_operands[i][0] = feature_window[i][conv_col_ctr+2];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][0] = weights[i][j][4];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][1] = weights[i][j][0];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = feature_window[i][conv_col_ctr];
+                end
+                // Weights
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][2] = weights[i][j][1];
+                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
+                            weight_operands[i][j][k][0] = weights[i][j][k][4];
+                            weight_operands[i][j][k][1] = weights[i][j][k][0];
+                            weight_operands[i][j][k][2] = weights[i][j][k][1];
+                        end
             end
             FIVE: begin
-                for (int i = 0; i < FILTER_SIZE; i++)
+                // Features
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_operands[i][0] = feature_window[i][conv_col_ctr];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][0] = weights[i][j][2];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][1] = feature_window[i][conv_col_ctr+1];
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][1] = weights[i][j][3];
-                for (int i = 0; i < FILTER_SIZE; i++)
                     feature_operands[i][2] = feature_window[i][conv_col_ctr+2];
+                end
+                // Weights
                 for (int i = 0; i < NUM_FILTERS; i++)
                     for (int j = 0; j < FILTER_SIZE; j++)
-                        weight_operands[i][j][2] = weights[i][j][4];
+                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
+                            weight_operands[i][j][k][0] = weights[i][j][k][2];
+                            weight_operands[i][j][k][1] = weights[i][j][k][3];
+                            weight_operands[i][j][k][2] = weights[i][j][k][4];
+                        end
             end
         endcase
     end
