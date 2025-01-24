@@ -37,8 +37,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 /*
-TODO: Determine proper bitwidths for adder stages, keeping data to 16 bits
-      Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
+TODO: Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
       Understand clock gating vs. clock enables vs. if macc_en is treated as a logic variable
 */
 
@@ -122,6 +121,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     // Adder Tree
     logic         [6:0] adder_tree_valid_sr[2:0];
+    logic         [2:0] adder_tree_valid_bits;
     logic signed [15:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
     logic signed [15:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
     logic signed [15:0] adder1_stage3[0:NUM_FILTERS-1][0:8];  // 9 adder outs from stage 2
@@ -183,6 +183,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             next_state = ONE;
     
+    // TODO: Syntax simplify
     always_ff @(posedge i_clk)
     begin
         // Check synthesis/implementation and verify reset is a free signal here
@@ -255,13 +256,10 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                     next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
                 end
             end
-            // Do we need a default if we don't use all cases?
-            // There is a latch in synth, check if related
         endcase
     end
     
-    // TODO: Use function and/or task to simplify this logic, its especially long
-    //       for the full LeNet-5 implementation amongst other larger adder trees
+    // TODO: Syntax simplify
     always_ff @(posedge i_clk) begin
         if (macc_en) begin
             for (int i = 0; i < NUM_FILTERS; i++) begin
@@ -347,41 +345,21 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         end
     end
     
-    // Would casex block be better here?
+    // Group adder tree valid bits into vector
     always_comb
-        if (adder_tree_valid_sr[0][6])
-            macc_acc = adder1_result;
-        else if (adder_tree_valid_sr[1][6])
-            macc_acc = adder2_result;
-        else if (adder_tree_valid_sr[2][6])
-            macc_acc = adder3_result;
-        else
-            macc_acc = macc_acc;
+        for (int i = 0; i < 3; i++)
+            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][6];
     
-    // DSP48E1 operation
-    // How do we want to go about pipelining
-    always_ff @(posedge i_clk)
-        for (int i = 0; i < NUM_FILTERS; i++)
-            for (int j = 0; j < 5; j++)
-                for (int k = 0; k < 3; k++)
-                    // Signed output only when both operands are signed
-                    mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
+    // Set MACC Accumulate based on adder tree valid bit
+    always_comb
+        case(adder_tree_valid_bits)
+            3'b100:  macc_acc = adder1_result;
+            3'b010:  macc_acc = adder2_result;
+            3'b001:  macc_acc = adder3_result;
+            default: macc_acc = macc_acc;
+        endcase
     
     // DSP48E1 operands
-    task assign_feature_operands(input int offsets[3]);
-        for (int i = 0; i < FILTER_SIZE; i++)
-            for (int j = 0; j < 3; j++)
-                feature_operands[i][j] = feature_window[i][conv_col_ctr-offsets[j]];
-    endtask
-    
-    task assign_weight_operands(input int offsets[3]);
-        for (int i = 0; i < NUM_FILTERS; i++)
-            for (int j = 0; j < FILTER_SIZE; j++)
-                for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++)
-                    for (int l = 0; l < 3; l++)
-                        weight_operands[i][j][k][l] = weights[i][j][k][offsets[l]];
-    endtask
-    
     always_comb begin
         int feature_offsets[3];
         int weight_offsets[3];
@@ -411,45 +389,57 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         assign_weight_operands(weight_offsets);
     end
     
+    task assign_feature_operands(input int offsets[3]);
+        for (int i = 0; i < FILTER_SIZE; i++)
+            for (int j = 0; j < 3; j++)
+                feature_operands[i][j] = feature_window[i][conv_col_ctr+offsets[j]];
+    endtask
+    
+    task assign_weight_operands(input int offsets[3]);
+        for (int i = 0; i < NUM_FILTERS; i++)
+            for (int j = 0; j < FILTER_SIZE; j++)
+                for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++)
+                    for (int l = 0; l < 3; l++)
+                        weight_operands[i][j][k][l] = weights[i][j][k][offsets[l]];
+    endtask
+    
     always_ff @(posedge i_clk)
-        if (macc_en) begin
+        for (int i = 0; i < NUM_FILTERS; i++)
+            for (int j = 0; j < 5; j++)
+                for (int k = 0; k < 3; k++)
+                    // Signed output only when both operands are signed
+                    mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
+    
+    always_ff @(posedge i_clk)
+        if (macc_en)
             case(state)
-                ONE: begin
-                    // 15 -> adder tree 1
-                end
-                TWO: begin
-                    // 10 -> adder tree 1,
-                    // 5  -> adder tree 2
-                    conv_col_ctr <= conv_col_ctr + 1;
-                end
-                THREE: begin
-                    // 15 -> adder tree 2
-                end
-                FOUR: begin
-                    // 5  -> adder tree 2
-                    // 10 -> adder tree 3
-                    conv_col_ctr <= conv_col_ctr + 1;
-                end
-                FIVE: begin
-                    // 15 -> adder tree 3
-                    conv_col_ctr <= conv_col_ctr + 1;
-                end
+                TWO:  conv_col_ctr <= conv_col_ctr + 1;
+                FOUR: conv_col_ctr <= conv_col_ctr + 1;
+                FIVE: conv_col_ctr <= conv_col_ctr + 1;
             endcase
-            adder_tree_valid_sr[0] <= { adder_tree_valid_sr[0][5:0], state == ONE  };
-            adder_tree_valid_sr[1] <= { adder_tree_valid_sr[1][5:0], state == TWO  };
-            adder_tree_valid_sr[2] <= { adder_tree_valid_sr[2][5:0], state == FOUR };
-        end
+    
+    always_ff @(posedge i_clk) begin
+        static state_t valid_states[3] = '{ONE, TWO, FOUR};
+        if (macc_en)
+            for (int i = 0; i < 3; i++)
+                adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], state == valid_states[i]};
+    end
      
-    // Flags
+    // Flags - TODO: Review
     always_comb begin
+    
         next_row         = conv_col_ctr == COL_END-1 && state == FIVE;
+        
         consume_features = conv_col_ctr == COL_START+10 && state == THREE;
+        
         // Can start filling next preload block 5 cycles after new row
         // of features are consumed. It doesn't have to be exactly 5 cycles later,
         // but the next start values need to be preloaded before the next row of convolutions begin
         fill_next_start  = conv_col_ctr == COL_START+11 && state == THREE;
+        
         // TODO: Review full flag, is it right to set the flag at an almost full state?
         lb_full          = fram_row_ctr == FILTER_SIZE && fram_col_ctr == COL_END-2;
+        
         macc_ready       = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
     end
     
@@ -474,7 +464,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         if (i_rst) begin
             fram_row_ctr <= ROW_START;
             fram_col_ctr <= COL_START;
-        end else
+        end else begin
             if (i_feature_valid) begin
                 fram_col_ctr <= fram_col_ctr + 1;
                 if (fram_col_ctr == COL_END-1) begin
@@ -488,14 +478,10 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                         feature_window[j][i] <= feature_window[j+1][i];
                 fram_col_ctr <= COL_START;
             end
+        end
     
-    always_comb
-        for (int i = 0; i < NUM_FILTERS; i++)
-            o_features[i] = macc_acc[i];
-    
+    assign o_features      = macc_acc;
     assign o_buffer_full   = lb_full;
-    assign o_feature_valid = adder_tree_valid_sr[0][6] ||
-                             adder_tree_valid_sr[1][6] ||
-                             adder_tree_valid_sr[2][6];
+    assign o_feature_valid = |adder_tree_valid_bits;
 
 endmodule
