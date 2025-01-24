@@ -81,12 +81,12 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     // Want to synth distributed RAMs for feature buffers,
     // These feature RAMs are essentially line buffers
-    logic         [7:0] feature_rams [FILTER_SIZE][INPUT_WIDTH];
+    logic         [7:0] feature_rams [0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
     // The actual feature window to be multiplied by the filter kernel
-    logic         [7:0] feature_window [5][5];
+    logic         [7:0] feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     // We buffer the initial feature window of the next row
     // It loads during convolution operation of the preceeding row
-    logic         [7:0] next_initial_feature_window [5][5];
+    logic         [7:0] next_initial_feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
     // FSM for preloading the initial feature window of the next row
     typedef enum logic [2:0] {
@@ -120,7 +120,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic fill_next_start;
     
     // Adder Tree
-    logic         [6:0] adder_tree_valid_sr[2:0];
+    logic         [6:0] adder_tree_valid_sr[0:2];
     logic         [2:0] adder_tree_valid_bits;
     logic signed [15:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
     logic signed [15:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
@@ -183,31 +183,18 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             next_state = ONE;
     
-    // TODO: Syntax simplify
+    // Should we set next_row at macc_en rising edge?
+    // So that the initial feature window of the first row is loaded in?
     always_ff @(posedge i_clk)
-    begin
-        // Check synthesis/implementation and verify reset is a free signal here
-        // regarding the 2:1 mux LUTs, I expect its the 6th input to the LUTs
         if (i_rst) begin
-            for (int i = 0; i < FILTER_SIZE; i++)
-                for (int j = 0; j < FILTER_SIZE; j++) begin
-                    feature_window[i][j]              <= 0;
-                    next_initial_feature_window[i][j] <= 0;
-                end
-            // Should we set next_row at macc_en rising edge?
-            // So that the initial feature window of the first row is loaded in?
+            feature_window <= '{default: 0};
+            next_initial_feature_window <= '{default: 0};
         end else if (next_row) begin
-            for (int i = 0; i < FILTER_SIZE; i++)
-                for (int j = 0; j < FILTER_SIZE; j++)
-                    feature_window[i][j] <= next_initial_feature_window[i][j];
+            feature_window <= next_initial_feature_window;
         end else begin
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                for (int j = 0; j < FILTER_SIZE-1; j++)
-                    feature_window[i][j] <= feature_window[i][j+1];
-                feature_window[i][FILTER_SIZE-1] <= feature_rams[i][conv_col_ctr];
-            end
+            for (int i = 0; i < FILTER_SIZE; i++)
+                feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][4:1]};
         end
-    end
     
     // Preload next initial feature window FSM
     always_ff @(posedge i_clk)
@@ -216,7 +203,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             preload_state <= preload_next_state;
     
-    always_comb begin
+    always_comb
         case(preload_state)
             IDLE: begin
                 if (fill_next_start) preload_next_state = FILL;
@@ -227,13 +214,12 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             SHIFT: begin
                 preload_next_state = IDLE;
             end
+            default: preload_next_state = preload_next_state;
         endcase
-    end
     
     // Next initial feature window actual filling logic
     // Need to handle first row initial feature window
     always_ff @(posedge i_clk)
-    begin
         case(preload_state)
             IDLE: begin
                 preload_col <= 3'b0;
@@ -250,6 +236,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 preload_col <= preload_col + 1;
             end
             SHIFT: begin
+                // TODO: Is it possible to implement a column-wise shift operation to shorten this code?
                 for (int i = 0; i < FILTER_SIZE; i++) begin
                     for (int j = 0; j < FILTER_SIZE-1; j++)
                         next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
@@ -257,22 +244,24 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 end
             end
         endcase
-    end
     
     // TODO: Syntax simplify
+    /*
+    for each adder tree
+        set constant where mult out index is for adder stage 1
+            based on this value, set rest of adder tree mult out connections
+        compute and set adder stage x registers based on adder stage x-1 registers
+    */
     always_ff @(posedge i_clk) begin
         if (macc_en) begin
             for (int i = 0; i < NUM_FILTERS; i++) begin
                 // Adder tree structure 1
-                adder1_stage1[i][10:14] <= mult_out[i][10:14];
-                adder1_stage1[i][5:9]   <= mult_out[i][5:9];
-                adder1_stage1[i][0:4]   <= mult_out[i][0:4];
+                adder1_stage1[i]        <= mult_out[i];
                 
                 adder1_stage2[i][17]    <= adder1_stage1[i][15];
                 for (int j = 0; j < 7; j++)
                     adder1_stage2[i][10+j] <= adder1_stage1[i][j*2] + adder1_stage1[i][j*2+1];
-                adder1_stage2[i][5:9]   <= mult_out[i][5:9];
-                adder1_stage2[i][0:4]   <= mult_out[i][0:4];
+                adder1_stage2[i][0:9]   <= mult_out[i][0:9];
                 
                 for (int j = 0; j < 9; j++)
                     adder1_stage3[i][j] <= adder1_stage2[i][j*2] + adder1_stage2[i][j*2+1];
@@ -297,13 +286,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 adder2_stage2[i][17]    <= adder2_stage1[i][4];
                 for (int j = 0; j < 2; j++)
                     adder2_stage2[i][j] <= adder2_stage1[i][j*2] + adder2_stage1[i][j*2+1];
-                adder2_stage2[i][14:10] <= mult_out[i][10:14];
-                adder2_stage2[i][9:5]   <= mult_out[i][5:9];
-                adder2_stage2[i][4:0]   <= mult_out[i][0:4];
+                adder2_stage2[i]        <= mult_out[i];
                 
                 for (int j = 0; j < 9; j++)
                     adder2_stage3[i][j+5] <= adder2_stage2[i][j*2] + adder2_stage2[i][j*2+1];
-                adder2_stage3[i][4:0]   <= mult_out[i][0:4];
+                adder2_stage3[i][0:4]   <= mult_out[i][0:4];
                 
                 for (int j = 0; j < 7; j++)
                     adder2_stage4[i][j+5] <= adder2_stage3[i][j*2] + adder2_stage3[i][j*2+1];
@@ -318,14 +305,11 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 adder2_result[i]        <= adder2_stage6[i][1] + adder2_stage6[i][0];
                 
                 // Adder tree structure 3
-                adder3_stage1[i][9:5]   <= mult_out[i][10:14];
-                adder3_stage1[i][4:0]   <= mult_out[i][5:9];
+                adder3_stage1[i][0:9]   <= mult_out[i][5:14];
                 
                 for (int j = 0; j < 5; j++)
                     adder3_stage2[i][j+15] <= adder3_stage1[i][j*2] + adder3_stage1[i][j*2+1];
-                adder3_stage2[i][14:10] <= mult_out[i][10:14];
-                adder3_stage2[i][9:5]   <= mult_out[i][5:9];
-                adder3_stage2[i][4:0]   <= mult_out[i][0:4];
+                adder3_stage2[i]        <= mult_out[i];
                 
                 for (int j = 0; j < 10; j++)
                     adder3_stage3[i][j] <= adder3_stage2[i][j*2] + adder3_stage2[i][j*2+1];
