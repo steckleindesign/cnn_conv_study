@@ -367,90 +367,48 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                     // Signed output only when both operands are signed
                     mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
     
-    // DSP48E1 operands - simplify this
+    // DSP48E1 operands
+    task assign_feature_operands(input int offsets[3]);
+        for (int i = 0; i < FILTER_SIZE; i++)
+            for (int j = 0; j < 3; j++)
+                feature_operands[i][j] = feature_window[i][conv_col_ctr-offsets[j]];
+    endtask
+    
+    task assign_weight_operands(input int offsets[3]);
+        for (int i = 0; i < NUM_FILTERS; i++)
+            for (int j = 0; j < FILTER_SIZE; j++)
+                for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++)
+                    for (int l = 0; l < 3; l++)
+                        weight_operands[i][j][k][l] = weights[i][j][k][offsets[l]];
+    endtask
+    
     always_comb begin
+        int feature_offsets[3];
+        int weight_offsets[3];
         case(state)
             ONE: begin
-                // Features
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    feature_operands[i][0] = feature_window[i][conv_col_ctr-2];
-                    feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
-                    feature_operands[i][2] = feature_window[i][conv_col_ctr];
-                end
-                // Weights
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
-                            weight_operands[i][j][k][0] = weights[i][j][k][0];       
-                            weight_operands[i][j][k][1] = weights[i][j][k][1];
-                            weight_operands[i][j][k][2] = weights[i][j][k][2];
-                        end
+                feature_offsets = '{-2,-1,0};
+                weight_offsets  = '{0,1,2};
             end
             TWO: begin
-                // Features
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    feature_operands[i][0] = feature_window[i][conv_col_ctr+1];
-                    feature_operands[i][1] = feature_window[i][conv_col_ctr+2];
-                    feature_operands[i][2] = feature_window[i][conv_col_ctr-1];
-                end
-                // Weights
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
-                            weight_operands[i][j][k][0] = weights[i][j][k][3];
-                            weight_operands[i][j][k][1] = weights[i][j][k][4];
-                            weight_operands[i][j][k][2] = weights[i][j][k][0];
-                        end
+                feature_offsets = '{1,2,-1};
+                weight_offsets  = '{3,4,0};
             end
             THREE: begin
-                // Features
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    feature_operands[i][0] = feature_window[i][conv_col_ctr-1];
-                    feature_operands[i][1] = feature_window[i][conv_col_ctr];
-                    feature_operands[i][2] = feature_window[i][conv_col_ctr+1];
-                end
-                // Weights
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
-                            weight_operands[i][j][k][0] = weights[i][j][k][1];
-                            weight_operands[i][j][k][1] = weights[i][j][k][2];
-                            weight_operands[i][j][k][2] = weights[i][j][k][3];
-                        end
+                feature_offsets = '{-1,0,1};
+                weight_offsets  = '{1,2,3};
             end
             FOUR: begin
-                // Features
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    feature_operands[i][0] = feature_window[i][conv_col_ctr+2];
-                    feature_operands[i][1] = feature_window[i][conv_col_ctr-1];
-                    feature_operands[i][2] = feature_window[i][conv_col_ctr];
-                end
-                // Weights
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
-                            weight_operands[i][j][k][0] = weights[i][j][k][4];
-                            weight_operands[i][j][k][1] = weights[i][j][k][0];
-                            weight_operands[i][j][k][2] = weights[i][j][k][1];
-                        end
+                feature_offsets = '{2,-1,0};
+                weight_offsets  = '{4,0,1};
             end
             FIVE: begin
-                // Features
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    feature_operands[i][0] = feature_window[i][conv_col_ctr];
-                    feature_operands[i][1] = feature_window[i][conv_col_ctr+1];
-                    feature_operands[i][2] = feature_window[i][conv_col_ctr+2];
-                end
-                // Weights
-                for (int i = 0; i < NUM_FILTERS; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++) begin
-                            weight_operands[i][j][k][0] = weights[i][j][k][2];
-                            weight_operands[i][j][k][1] = weights[i][j][k][3];
-                            weight_operands[i][j][k][2] = weights[i][j][k][4];
-                        end
+                feature_offsets = '{0,1,2};
+                weight_offsets  = '{2,3,4};
             end
         endcase
+        assign_feature_operands(feature_offsets);
+        assign_weight_operands(weight_offsets);
     end
     
     always_ff @(posedge i_clk)
