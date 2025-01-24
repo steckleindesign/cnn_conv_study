@@ -88,15 +88,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // It loads during convolution operation of the preceeding row
     logic         [7:0] next_initial_feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
-    // FSM for preloading the initial feature window of the next row
-    typedef enum logic [2:0] {
-        IDLE, FILL, SHIFT
-    } preload_state_t;
-    preload_state_t preload_state, preload_next_state;
-    // Column location of the preload operation, treated as the address to the feature RAMs
-    // for the sake of filling the initial feauture window of the next row
-    logic         [2:0] preload_col;
-    
     // Signals holding the DSP48E1 operands, used for readability
     logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
     logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:2];
@@ -110,6 +101,16 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // Is conv row cnt needed?
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
+    
+    logic [2:0] preload_col;
+    
+    // FSM for preloading the initial feature window of the next row
+    typedef enum logic [2:0] {
+        IDLE, FILL, SHIFT
+    } preload_state_t;
+    preload_state_t preload_state, preload_next_state;
+    // Column location of the preload operation, treated as the address to the feature RAMs
+    // for the sake of filling the initial feauture window of the next row
     
     // Flags
     logic macc_en;
@@ -193,7 +194,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             feature_window <= next_initial_feature_window;
         end else begin
             for (int i = 0; i < FILTER_SIZE; i++)
-                feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][4:1]};
+                feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][1:4]};
         end
     
     // Preload next initial feature window FSM
@@ -286,7 +287,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 adder2_stage2[i][17]    <= adder2_stage1[i][4];
                 for (int j = 0; j < 2; j++)
                     adder2_stage2[i][j] <= adder2_stage1[i][j*2] + adder2_stage1[i][j*2+1];
-                adder2_stage2[i]        <= mult_out[i];
+                adder2_stage2[i][0:14]  <= mult_out[i];
                 
                 for (int j = 0; j < 9; j++)
                     adder2_stage3[i][j+5] <= adder2_stage2[i][j*2] + adder2_stage2[i][j*2+1];
@@ -309,7 +310,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 
                 for (int j = 0; j < 5; j++)
                     adder3_stage2[i][j+15] <= adder3_stage1[i][j*2] + adder3_stage1[i][j*2+1];
-                adder3_stage2[i]        <= mult_out[i];
+                adder3_stage2[i][0:14]  <= mult_out[i];
                 
                 for (int j = 0; j < 10; j++)
                     adder3_stage3[i][j] <= adder3_stage2[i][j*2] + adder3_stage2[i][j*2+1];
@@ -455,11 +456,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                     fram_col_ctr <= COL_START;
                     fram_row_ctr <= fram_row_ctr + 1;
                 end
-                feature_window[fram_row_ctr][fram_col_ctr] <= i_feature;
             end else if (next_row) begin
-                for (int i = 2; i < COL_END; i++)
-                    for (int j = 0; j < FILTER_SIZE; j++)
-                        feature_window[j][i] <= feature_window[j+1][i];
                 fram_col_ctr <= COL_START;
             end
         end
