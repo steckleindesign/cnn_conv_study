@@ -17,22 +17,23 @@ module feature_fwft(
     localparam FIFO_DEPTH = 27*27;
     localparam FIFO_ADDRW = $clog2(FIFO_DEPTH);
     
-    logic valid;
-    
     logic [FIFO_WIDTH-1:0] fifo_data [0:FIFO_DEPTH-1];
-    
     logic [FIFO_ADDRW-1:0] fifo_rd_addr;
     logic [FIFO_ADDRW-1:0] fifo_wr_addr;
+    logic                  valid;
     
-    always_ff @(clk)
+    always_ff @(posedge clk)
     begin
         if (rst) begin
+            fifo_data    <= '{default: 0};
             fifo_rd_addr <= 'b0;
             fifo_wr_addr <= 'b0;
             valid        <= 0;
         end else begin
-            if (fifo_wr_addr < FIFO_DEPTH)
+            if (fifo_wr_addr < FIFO_DEPTH) begin
                 fifo_data[fifo_wr_addr] <= in_feature;
+                fifo_wr_addr <= fifo_wr_addr + 1;
+            end
             if (rd_en)
                 fifo_rd_addr <= fifo_rd_addr + 1;
             
