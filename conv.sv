@@ -1,47 +1,44 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 /*
-
-    Architecture:
+    Theory of Operation:
         Overview:
-            Utilize 90 DSPs for convolution
-            Complete 3 convolutions in 5 clock cycles
-            We will skip the last convolution (output feature) for each row
+            Utilize 90 DSPs for convolution.
+            Complete 3 convolution kernels in 5 clock cycles.
+            We will skip the last convolution (output feature)
+            for each row for simplicity.
             There will be 27 convolutions (output features) in each row
-            This will take (27/3)*5 = 45 clock cycles per row
-            We will sequentially execute convolution operation on 27 rows
-            For each row, convolve left to right, from output feature 0-26
+            which will take (27/3)*5 = 45 clock cycles per row.
+            We will sequentially execute convolution operations on 27 rows.
+            For each row, convolve left to right, from output feature 0-26.
         Start
-            Wait until line buffer is full to enable convolution operation
-        End of row (After each row convolution operation if finished):
-            Increment feature row count
-            Shift line buffer down
-            reset the line buffer full flag
+            Wait until feature RAMs are full to enable convolution operation.
+            Start when there is just enough data in the feature RAMs in the future,
+            but for now we wait until the feature RAMs are full for simplicity.
         
-        90 DSPs, 50 BRAMS (36Kb each)
-        6 filters for conv1, 5x5 filter (25 * ops), 27x27 conv ops (730)
-        = 6*(5*5)*(27*27) = 109350 * ops / 90 DSPs = 1215 cycs theoretically
+        Artix7-35 Resources
+            90 DSPs, 50 BRAMS (36Kb each)
+        Required Resources by Design
+        
+        Latency due to Design
+            6 filters for conv1, 5x5 filter (25 * ops), 27x27 conv ops (730)
+            = 6*(5*5)*(27*27) = 109350 * ops / 90 DSPs = 1215 cycs theoretically
         
         Study how to get outputs of DSP48s to carry chain resources efficiently
         
-        State:        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14
+        State:         0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14
         
         adder 1-1:    15, 18,  9,  5,  3,  2,  1
-        adder 2-1:        5,  18, 14,  7,  4,  2,  1
+        adder 2-1:         5, 18, 14,  7,  4,  2,  1
         adder 3-1:                10, 20, 10,  5,  3,  2,  1
         
         adder 1-2:                        15, 18,  9,  5,  3,  2,  1
-        adder 2-2:                            5,  18, 14,  7,  4,  2,  1
+        adder 2-2:                             5, 18, 14,  7,  4,  2,  1
         adder 3-2:                                    10, 20, 10,  5,  3,  2,  1
 */
 //////////////////////////////////////////////////////////////////////////////////
 
-/*
-TODO: Async reset? or sync and see if its used as 6th LUT input (1 sel, 2x 2:1 mux inputs)
-      Understand clock gating vs. clock enables vs. if macc_en is treated as a logic variable
-*/
-
-module conv #( parameter NUM_FILTERS = 6 ) (
+module conv(
     input  logic               i_clk,
     input  logic               i_rst,
     input  logic               i_feature_valid,
@@ -55,9 +52,10 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     localparam string WEIGHTS_FILE  = "weights.mem";
     localparam string BIASES_FILE   = "biases.mem";
     localparam        NUM_DSP48E1   = 90;
+    localparam        NUM_FILTERS   = 6;
+    localparam        FILTER_SIZE   = 5;
     localparam        INPUT_WIDTH   = 31;
     localparam        INPUT_HEIGHT  = 31;
-    localparam        FILTER_SIZE   = 5;
     localparam        ROW_START     = 2;
     localparam        ROW_END       = 29;
     localparam        COL_START     = 2;
@@ -79,7 +77,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic signed [15:0] biases [0:NUM_FILTERS-1];
     initial $readmemb(BIASES_FILE, biases);
     
-    // Want to synth distributed RAMs for feature buffers,
+    // Make sure distributed RAMs are synthesized
     // These feature RAMs are essentially line buffers
     logic         [7:0] feature_rams [0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
     // The actual feature window to be multiplied by the filter kernel
@@ -120,17 +118,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         ONE, TWO, THREE, FOUR, FIVE
     } state_t;
     state_t state, next_state;
-        
-    
-    // Flags
-    logic macc_en;
-    logic macc_ready;
-    logic lb_full;
-    logic next_row;
-    logic consume_features;
-    logic fill_next_start;
-    logic fram_has_been_full;
-    logic done_receiving;
     
     // Adder Tree
     logic         [6:0] adder_tree_valid_sr[0:2];
@@ -157,6 +144,60 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic signed [15:0] adder3_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
     logic signed [15:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
+    
+    // Flags
+    logic macc_en;
+    logic macc_ready;
+    logic lb_full;
+    logic next_row;
+    logic consume_features;
+    logic fill_next_start;
+    logic fram_has_been_full;
+    logic done_receiving;
+    
+    // Flags - TODO: Review
+    always_comb begin
+        // This flag is set when the next clock cycle will be the
+        // first operation in the next row of convolutions
+        // Used to load in the initial feature window values
+        // of the following row convolution operation
+        // Also used to control when to stop consuming new features
+        // from the feature input FIFO. After the feature RAMs have
+        // been filled before, each next row of features are consumed
+        // during the last 27 (or 28?) clock cycles of the current
+        // convolution row operation.
+        // Also used to control convolution counters
+        next_row = conv_col_ctr == COL_END-1 && state == FIVE;
+                
+        // Can start filling next preload block after the first 5 features
+        // of the next row in the feature RAM are consumed.
+        // It doesn't have to be exactly 5 cycles later, but ideally this operation
+        // would not collide with consuming input features into the feature RAMs
+        // because there is already read operations from the RAMs during that time
+        // due to the shifting logic in the RAMs as features are consumed.
+        // The next start values need to be preloaded before the next row of convolutions begin.
+        fill_next_start = conv_col_ctr == COL_START+11 && state == THREE;
+        
+        // Do we really need this flag? or just set MACC enable directly in a clocked process
+        macc_ready = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
+        
+    end
+    
+    always_ff @(posedge i_clk)
+        if (~i_rst) begin
+            fram_has_been_full <= 0;
+            consume_features   <= 0;
+            done_receiving     <= 0;
+        end else
+            if (lb_full)
+                fram_has_been_full <= 1;
+            if (conv_col_ctr == (COL_START+10) && state == THREE)
+                consume_features <= 1;
+            else if (next_row)
+                consume_features <= 0;
+            if (conv_row_ctr == ROW_END && lb_full)
+                done_receiving <= 1;
+        end
     
     always_ff @(posedge i_clk)
         if (i_rst)
@@ -191,7 +232,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            feature_window <= '{default: 0};
+            feature_window              <= '{default: 0};
             next_initial_feature_window <= '{default: 0};
         // Does this assignment need to occur 1 cycle before macc_en is set?
         end else if (next_row | macc_ready) begin
@@ -402,35 +443,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             for (int i = 0; i < 3; i++)
                 adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], state == valid_states[i]};
     end
-     
-    // Flags - TODO: Review
-    always_comb begin
-    
-        next_row         = conv_col_ctr == COL_END-1 && state == FIVE;
-        
-        consume_features = conv_col_ctr == COL_START+10 && state == THREE;
-        
-        // Can start filling next preload block 5 cycles after new row
-        // of features are consumed. It doesn't have to be exactly 5 cycles later,
-        // but the next start values need to be preloaded before the next row of convolutions begin
-        fill_next_start  = conv_col_ctr == COL_START+11 && state == THREE;
-        
-        // TODO: Review full flag, is it right to set the flag at an almost full state?
-        
-        lb_full          = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_END-2;
-        
-        macc_ready       = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
-        
-        // Need to keep this done flag set high until the next reset
-        done_receiving   = conv_row_ctr == ROW_END && lb_full;
-    end
-    
-    always_ff @(posedge i_clk)
-        if (~i_rst)
-            fram_has_been_full <= 0;
-        else
-            if (lb_full)
-                fram_has_been_full <= 1;
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
@@ -455,7 +467,10 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             fram_col_ctr <= COL_START;
         end else begin
             if (!done_receiving) begin
-                if (i_feature_valid && ~lb_full && consume_features) begin
+                if (i_feature_valid && (~fram_has_been_full | consume_features)) begin
+                    // More specifically - "line buffer almost full"
+                    // TODO: Set the flag 1 cycle before full and 1 cycle before not-full
+                    lb_full <= 0;
                     if (fram_has_been_full) begin
                         for (int i = 0; i < FILTER_SIZE-1; i++) begin
                             fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
@@ -469,6 +484,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                         if (fram_row_ctr < FILTER_SIZE-1) // (~fram_row_ctr[2])
                             fram_row_ctr <= fram_row_ctr + 1;
                     end
+                end else begin
+                    lb_full <= 1;
                 end
             end
         end
