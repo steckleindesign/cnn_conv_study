@@ -6,6 +6,7 @@
         Study bit lopping
         
     TODO:
+        MMCM PLL
         Testbenches
         - feature_buf
         - conv

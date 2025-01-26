@@ -119,6 +119,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic next_row;
     logic consume_features;
     logic fill_next_start;
+    logic done_receiving;
     
     // Adder Tree
     logic         [6:0] adder_tree_valid_sr[0:2];
@@ -152,7 +153,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         ONE, TWO, THREE, FOUR, FIVE
     } state_t;
     state_t state, next_state;
-    
+        
     always_ff @(posedge i_clk)
         if (i_rst)
             state <= ONE;
@@ -396,12 +397,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                     mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
     
     always_ff @(posedge i_clk)
-        if (macc_en)
-            case(state)
-                TWO:  conv_col_ctr <= conv_col_ctr + 1;
-                FOUR: conv_col_ctr <= conv_col_ctr + 1;
-                FIVE: conv_col_ctr <= conv_col_ctr + 1;
-            endcase
+        if (macc_en && (state == TWO | state == FOUR | state == FIVE))
+            conv_col_ctr <= conv_col_ctr + 1;
     
     always_ff @(posedge i_clk) begin
         static state_t valid_states[3] = '{ONE, TWO, FOUR};
@@ -423,9 +420,13 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         fill_next_start  = conv_col_ctr == COL_START+11 && state == THREE;
         
         // TODO: Review full flag, is it right to set the flag at an almost full state?
+        
         lb_full          = fram_row_ctr == FILTER_SIZE && fram_col_ctr == COL_END-2;
         
         macc_ready       = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
+        
+        // Need to keep this done flag set high until the next reset
+        done_receiving   = conv_row_ctr == ROW_END && lb_full;
     end
     
     always_ff @(posedge i_clk)
@@ -450,16 +451,20 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             fram_row_ctr <= ROW_START;
             fram_col_ctr <= COL_START;
         end else begin
-            if (i_feature_valid) begin
-                fram_col_ctr <= fram_col_ctr + 1;
-                if (fram_col_ctr == COL_END-1) begin
+            if (!done_receiving) begin
+                if (i_feature_valid && ~lb_full) begin
+                    fram_col_ctr <= fram_col_ctr + 1;
+                    if (fram_col_ctr == COL_END-1) begin
+                        fram_col_ctr <= COL_START;
+                        fram_row_ctr <= fram_row_ctr + 1;
+                    end
+                end else if (next_row) begin
                     fram_col_ctr <= COL_START;
-                    fram_row_ctr <= fram_row_ctr + 1;
                 end
-            end else if (next_row) begin
-                fram_col_ctr <= COL_START;
             end
         end
+    
+    // Bring in i_feature (s)
     
     assign o_features      = macc_acc;
     assign o_buffer_full   = lb_full;
