@@ -88,6 +88,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     // It loads during convolution operation of the preceeding row
     logic         [7:0] next_initial_feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
+    logic signed [15:0] fram_swap_regs[0:NUM_FILTERS-2];
+    
     // Signals holding the DSP48E1 operands, used for readability
     logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
     logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:2];
@@ -111,6 +113,14 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     preload_state_t preload_state, preload_next_state;
     // Column location of the preload operation, treated as the address to the feature RAMs
     // for the sake of filling the initial feauture window of the next row
+    
+    // Convolution FSM, controls DSP48E1 time multiplexing,
+    // and convolution feature counters
+    typedef enum logic [2:0] {
+        ONE, TWO, THREE, FOUR, FIVE
+    } state_t;
+    state_t state, next_state;
+        
     
     // Flags
     logic macc_en;
@@ -148,13 +158,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic signed [15:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
-    // Convolution FSM, controls DSP48E1 time multiplexing,
-    // and convolution feature counters
-    typedef enum logic [2:0] {
-        ONE, TWO, THREE, FOUR, FIVE
-    } state_t;
-    state_t state, next_state;
-        
     always_ff @(posedge i_clk)
         if (i_rst)
             state <= ONE;
@@ -423,7 +426,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     end
     
     always_ff @(posedge i_clk)
-        if (~rst)
+        if (~i_rst)
             fram_has_been_full <= 0;
         else
             if (lb_full)
@@ -453,16 +456,18 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         end else begin
             if (!done_receiving) begin
                 if (i_feature_valid && ~lb_full && consume_features) begin
+                    if (fram_has_been_full) begin
+                        for (int i = 0; i < FILTER_SIZE-1; i++) begin
+                            fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+                            feature_rams[i][fram_col_ctr] <= fram_swap_regs[i];
+                        end
+                    end
                     feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
                     fram_col_ctr <= fram_col_ctr + 1;
                     if (fram_col_ctr == COL_END-1) begin
                         fram_col_ctr <= COL_START;
                         if (fram_row_ctr < FILTER_SIZE-1) // (~fram_row_ctr[2])
                             fram_row_ctr <= fram_row_ctr + 1;
-                    end
-                    
-                    if (fram_has_been_full) begin
-                        // Need shift logic for RAMs
                     end
                 end
             end
