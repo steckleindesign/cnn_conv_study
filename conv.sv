@@ -95,8 +95,8 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
     
     // Feature RAM location
-    logic [$clog2(ROW_END)-1:0] fram_row_ctr;
-    logic [$clog2(COL_END)-1:0] fram_col_ctr;
+    logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
+    logic [$clog2(COL_END)-1:0]     fram_col_ctr;
     // Convolution Feature location
     // Is conv row cnt needed?
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
@@ -119,6 +119,7 @@ module conv #( parameter NUM_FILTERS = 6 ) (
     logic next_row;
     logic consume_features;
     logic fill_next_start;
+    logic fram_has_been_full;
     logic done_receiving;
     
     // Adder Tree
@@ -185,13 +186,12 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         else
             next_state = ONE;
     
-    // Should we set next_row at macc_en rising edge?
-    // So that the initial feature window of the first row is loaded in?
     always_ff @(posedge i_clk)
         if (i_rst) begin
             feature_window <= '{default: 0};
             next_initial_feature_window <= '{default: 0};
-        end else if (next_row) begin
+        // Does this assignment need to occur 1 cycle before macc_en is set?
+        end else if (next_row | macc_ready) begin
             feature_window <= next_initial_feature_window;
         end else begin
             for (int i = 0; i < FILTER_SIZE; i++)
@@ -227,13 +227,6 @@ module conv #( parameter NUM_FILTERS = 6 ) (
                 preload_col <= 3'b0;
             end
             FILL: begin
-                // Logic here depends on implementation of feature RAM filling
-                // Will the data arriving into the feature RAMs fill the row 0 RAM?
-                // Or will the RAM values be shifted as incoming data populates the RAM,
-                // and therefore the features needed for the preload feature block will
-                // Already be in the bottom row RAM, which is the correct order for the features
-                // If the former, will need to make sure to shift up the values in RAM
-                // before the next row of convolutions
                 next_initial_feature_window[0][preload_col] <= feature_rams[FILTER_SIZE-1][preload_col];
                 preload_col <= preload_col + 1;
             end
@@ -421,13 +414,20 @@ module conv #( parameter NUM_FILTERS = 6 ) (
         
         // TODO: Review full flag, is it right to set the flag at an almost full state?
         
-        lb_full          = fram_row_ctr == FILTER_SIZE && fram_col_ctr == COL_END-2;
+        lb_full          = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_END-2;
         
         macc_ready       = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
         
         // Need to keep this done flag set high until the next reset
         done_receiving   = conv_row_ctr == ROW_END && lb_full;
     end
+    
+    always_ff @(posedge i_clk)
+        if (~rst)
+            fram_has_been_full <= 0;
+        else
+            if (lb_full)
+                fram_has_been_full <= 1;
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
@@ -452,19 +452,21 @@ module conv #( parameter NUM_FILTERS = 6 ) (
             fram_col_ctr <= COL_START;
         end else begin
             if (!done_receiving) begin
-                if (i_feature_valid && ~lb_full) begin
+                if (i_feature_valid && ~lb_full && consume_features) begin
+                    feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
                     fram_col_ctr <= fram_col_ctr + 1;
                     if (fram_col_ctr == COL_END-1) begin
                         fram_col_ctr <= COL_START;
-                        fram_row_ctr <= fram_row_ctr + 1;
+                        if (fram_row_ctr < FILTER_SIZE-1) // (~fram_row_ctr[2])
+                            fram_row_ctr <= fram_row_ctr + 1;
                     end
-                end else if (next_row) begin
-                    fram_col_ctr <= COL_START;
+                    
+                    if (fram_has_been_full) begin
+                        // Need shift logic for RAMs
+                    end
                 end
             end
         end
-    
-    // Bring in i_feature (s)
     
     assign o_features      = macc_acc;
     assign o_buffer_full   = lb_full;
