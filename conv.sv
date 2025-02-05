@@ -188,13 +188,15 @@ module conv(
             fram_has_been_full <= 0;
             consume_features   <= 0;
             done_receiving     <= 0;
-        end else
+        end else begin
             if (lb_full)
                 fram_has_been_full <= 1;
+                
             if (conv_col_ctr == (COL_START+10) && state == THREE)
                 consume_features <= 1;
             else if (next_row)
                 consume_features <= 0;
+            
             if (conv_row_ctr == ROW_END && lb_full)
                 done_receiving <= 1;
         end
