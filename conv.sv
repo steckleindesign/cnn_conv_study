@@ -171,7 +171,7 @@ module conv #(localparam NUM_FILTERS = 6) (
         // during the last 27 (or 28?) clock cycles of the current
         // convolution row operation.
         // Also used to control convolution counters
-        next_row = conv_col_ctr == COL_END-1 && state == FIVE;
+        next_row = conv_col_ctr == COL_END && state == FIVE;
                 
         // Can start filling next preload block after the first 5 features
         // of the next row in the feature RAM are consumed.
@@ -182,7 +182,7 @@ module conv #(localparam NUM_FILTERS = 6) (
         // The next start values need to be preloaded before the next row of convolutions begin.
         fill_next_start = conv_col_ctr == COL_START+11 && state == THREE;
         
-        // Do we really need this flag? or just set MACC enable directly in a clocked process
+        // Can we go 1 or even 2 cycles earlier?
         macc_ready = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
         
     end
@@ -195,7 +195,8 @@ module conv #(localparam NUM_FILTERS = 6) (
         end else begin
             if (lb_full)
                 fram_has_been_full <= 1;
-                
+            
+            // Review
             if (conv_col_ctr == (COL_START+10) && state == THREE)
                 consume_features <= 1;
             else if (next_row)
@@ -240,12 +241,14 @@ module conv #(localparam NUM_FILTERS = 6) (
         if (i_rst) begin
             feature_window              <= '{default: 0};
             next_initial_feature_window <= '{default: 0};
-        // Does this assignment need to occur 1 cycle before macc_en is set?
         end else if (next_row | macc_ready) begin
             feature_window <= next_initial_feature_window;
         end else begin
-            for (int i = 0; i < FILTER_SIZE; i++)
+            // Review, seems incorrect, should not be shifting every cycle
+            // Maybe just shift during the states which conv col cnt is incr?
+            for (int i = 0; i < FILTER_SIZE; i++) begin
                 feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][1:4]};
+            end
         end
     
     // Preload next initial feature window FSM
@@ -418,6 +421,7 @@ module conv #(localparam NUM_FILTERS = 6) (
         assign_weight_operands(weight_offsets);
     end
     
+    // Review, definitely incorrect
     task assign_feature_operands(input int offsets[3]);
         for (int i = 0; i < FILTER_SIZE; i++)
             for (int j = 0; j < 3; j++)
@@ -444,9 +448,13 @@ module conv #(localparam NUM_FILTERS = 6) (
     
     always_ff @(posedge i_clk) begin
         static state_t valid_states[3] = '{ONE, TWO, FOUR};
-        if (macc_en)
+        if (macc_en) begin
             for (int i = 0; i < 3; i++)
                 adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], state == valid_states[i]};
+        end else begin
+            for (int i = 0; i < 3; i++)
+                adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], 1'b0};
+        end
     end
     
     always_ff @(posedge i_clk)
@@ -454,7 +462,6 @@ module conv #(localparam NUM_FILTERS = 6) (
             macc_en             <= 0;
             conv_row_ctr        <= ROW_START;
             conv_col_ctr        <= COL_START;
-            adder_tree_valid_sr <= '{default: 0};
         end else begin
             // Enable MACC operations when feature RAMs are full enough
             // for the first convolution window/kernel operation
