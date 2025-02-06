@@ -38,7 +38,7 @@
 */
 //////////////////////////////////////////////////////////////////////////////////
 
-module conv(
+module conv #(localparam NUM_FILTERS = 6) (
     input  logic               i_clk,
     input  logic               i_rst,
     input  logic               i_feature_valid,
@@ -52,8 +52,10 @@ module conv(
     localparam string WEIGHTS_FILE  = "weights.mem";
     localparam string BIASES_FILE   = "biases.mem";
     localparam        NUM_DSP48E1   = 90;
-    localparam        NUM_FILTERS   = 6;
-    localparam        FILTER_SIZE   = 5;
+    localparam        DSP_PER_CH    = NUM_DSP48E1 / NUM_FILTERS;
+    localparam        FILTER_SIZE   = 5; // 5x5 filters
+    localparam        OFFSET_GRP_SZ = DSP_PER_CH / FILTER_SIZE;
+    localparam        WEIGHT_ROM_DP = 5;
     localparam        INPUT_WIDTH   = 31;
     localparam        INPUT_HEIGHT  = 31;
     localparam        ROW_START     = 2;
@@ -70,7 +72,9 @@ module conv(
     // Initialize trainable parameters
     // Weights
     // (* rom_style = "block" *)
-    logic signed [15:0] weights [0:NUM_FILTERS-1][0:4][0:2][0:4];
+    logic signed [15:0]
+    weights [0:NUM_FILTERS-1][0:FILTER_SIZE-1]
+            [0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DP-1];
     initial $readmemb(WEIGHTS_FILE, weights);
     // Biases
     // (* rom_style = "block" *)
@@ -90,7 +94,7 @@ module conv(
     
     // Signals holding the DSP48E1 operands, used for readability
     logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
-    logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:2];
+    logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     // All 90 DSP48E1 outputs
     logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
     
@@ -423,17 +427,16 @@ module conv(
     task assign_weight_operands(input int offsets[3]);
         for (int i = 0; i < NUM_FILTERS; i++)
             for (int j = 0; j < FILTER_SIZE; j++)
-                for (int k = 0; k < NUM_DSP48E1 / NUM_FILTERS / FILTER_SIZE; k++)
-                    for (int l = 0; l < 3; l++)
-                        weight_operands[i][j][k][l] = weights[i][j][k][offsets[l]];
+                for (int k = 0; k < OFFSET_GRP_SZ; k++)
+                    weight_operands[i][j][k] = weights[i][j][k][offsets[k]];
     endtask
     
     always_ff @(posedge i_clk)
         for (int i = 0; i < NUM_FILTERS; i++)
-            for (int j = 0; j < 5; j++)
-                for (int k = 0; k < 3; k++)
-                    // Signed output only when both operands are signed
-                    mult_out[i][k*5+j] <= weight_operands[i][j][k] * $signed(feature_operands[j][k]);
+            for (int j = 0; j < FILTER_SIZE; j++)
+                for (int k = 0; k < OFFSET_GRP_SZ; k++)
+                    mult_out[i][k*5+j] <= weight_operands[i][j][k]
+                                            * $signed(feature_operands[j][k]);
     
     always_ff @(posedge i_clk)
         if (macc_en && (state == TWO | state == FOUR | state == FIVE))
