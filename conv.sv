@@ -150,8 +150,8 @@ module conv #(localparam NUM_FILTERS = 6) (
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
     // Flags
-    logic macc_en;
-    logic macc_ready;
+    logic macc_en;            // OK
+    logic macc_ready;         // OK
     logic lb_full;
     logic next_row;
     logic consume_features;
@@ -180,15 +180,15 @@ module conv #(localparam NUM_FILTERS = 6) (
         // because there is already read operations from the RAMs during that time
         // due to the shifting logic in the RAMs as features are consumed.
         // The next start values need to be preloaded before the next row of convolutions begin.
-        fill_next_start = conv_col_ctr == COL_START+11 && state == THREE;
+        fill_next_start = conv_col_ctr == (COL_START+11) && state == THREE;
         
-        // Can we go 1 or even 2 cycles earlier?
-        macc_ready = fram_row_ctr == FILTER_SIZE-1 && fram_col_ctr == COL_START+FILTER_SIZE;
+        // Check off by 1
+        macc_ready = fram_row_ctr == (FILTER_SIZE-1);
         
     end
     
     always_ff @(posedge i_clk)
-        if (~i_rst) begin
+        if (i_rst) begin
             fram_has_been_full <= 0;
             consume_features   <= 0;
             done_receiving     <= 0;
@@ -280,6 +280,7 @@ module conv #(localparam NUM_FILTERS = 6) (
                 preload_col <= 3'b0;
             end
             FILL: begin
+                // Review
                 next_initial_feature_window[0][preload_col] <= feature_rams[FILTER_SIZE-1][preload_col];
                 preload_col <= preload_col + 1;
             end
@@ -421,11 +422,11 @@ module conv #(localparam NUM_FILTERS = 6) (
         assign_weight_operands(weight_offsets);
     end
     
-    // Review, definitely incorrect
+    // Review, definitely incorrect -> conv_col_ctr+offsets[j]
     task assign_feature_operands(input int offsets[3]);
         for (int i = 0; i < FILTER_SIZE; i++)
             for (int j = 0; j < 3; j++)
-                feature_operands[i][j] = feature_window[i][conv_col_ctr+offsets[j]];
+                feature_operands[i][j] = feature_window[i][offsets[j]];
     endtask
     
     task assign_weight_operands(input int offsets[3]);
@@ -459,9 +460,9 @@ module conv #(localparam NUM_FILTERS = 6) (
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            macc_en             <= 0;
-            conv_row_ctr        <= ROW_START;
-            conv_col_ctr        <= COL_START;
+            macc_en      <= 0;
+            conv_row_ctr <= ROW_START;
+            conv_col_ctr <= COL_START;
         end else begin
             // Enable MACC operations when feature RAMs are full enough
             // for the first convolution window/kernel operation
@@ -472,7 +473,8 @@ module conv #(localparam NUM_FILTERS = 6) (
                 conv_col_ctr <= COL_START;
             end
         end
-    
+        
+    // On power-up, need to set feature RAM "zero ring"
     always_ff @(posedge i_clk)
         if (i_rst) begin
             fram_row_ctr <= ROW_START;
@@ -491,13 +493,17 @@ module conv #(localparam NUM_FILTERS = 6) (
                     end
                     feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
                     fram_col_ctr <= fram_col_ctr + 1;
-                    if (fram_col_ctr == COL_END-1) begin
+                    if (fram_col_ctr == COL_END) begin
                         fram_col_ctr <= COL_START;
-                        if (fram_row_ctr < FILTER_SIZE-1) // (~fram_row_ctr[2])
+                        if (fram_row_ctr < FILTER_SIZE-1) begin // (~fram_row_ctr[2])
                             fram_row_ctr <= fram_row_ctr + 1;
+                        end
                     end
                 end else begin
-                    lb_full <= 1;
+                    // Check off by 1
+                    if ((fram_row_ctr == (FILTER_SIZE-1) && fram_col_ctr == (COL_END-1)) ||
+                        fram_has_been_full)
+                        lb_full <= 1;
                 end
             end
         end
