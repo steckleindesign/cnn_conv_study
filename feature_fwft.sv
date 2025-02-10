@@ -3,7 +3,6 @@
 // 8-wide, 27x27-deep
 //////////////////////////////////////////////////////////////////////////////////
 
-
 module feature_fwft(
     input        clk,
     input        rst,
@@ -30,18 +29,21 @@ module feature_fwft(
             fifo_wr_addr <= 'b0;
             valid        <= 0;
         end else begin
+            // TODO: Need more useful valid signal
+            valid <= 1;
             if (fifo_wr_addr < FIFO_DEPTH) begin
                 fifo_data[fifo_wr_addr] <= in_feature;
                 fifo_wr_addr <= fifo_wr_addr + 1;
             end
-            if (rd_en)
+            if (fifo_wr_addr > 0 && rd_en) begin
                 fifo_rd_addr <= fifo_rd_addr + 1;
-            
-            valid = fifo_rd_addr == FIFO_DEPTH ? 0 : 1;
+            end
         end
     end
     
     assign feature_valid = valid;
+    // Should this be registered or is it ok
+    // since we process the data in conv in a sequential process
     assign out_feature   = fifo_data[fifo_rd_addr];
 
 endmodule

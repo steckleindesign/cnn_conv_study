@@ -8,7 +8,6 @@
     TODO:
         MMCM PLL
         Testbenches
-        - feature_buf
         - conv
         - post_processing
         
@@ -16,47 +15,44 @@
 
 //////////////////////////////////////////////////////////////////////////////////
 
-localparam CONV_FILTERS = 6;
-
 module conv_study_top (
     input                clk,
     input                rst,
     input          [7:0] feature_in,
     output signed [15:0] feature_out,
-    
+    // LEDs for dev board
     output         [1:0] led,
     output               led_r, led_g, led_b
 );
+
+    localparam NUM_CONV_FILTERS = 6;
 
     logic               line_buf_full;
     logic               conv1_feat_in_valid;
     logic         [7:0] conv1_feature_in;
     
     logic               output_features_valid;
-    logic signed [15:0] output_features[CONV_FILTERS];
+    logic signed [15:0] output_features[NUM_CONV_FILTERS];
         
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),
                                     .in_feature(feature_in),
-                                    .rd_en(line_buf_full),
+                                    .rd_en(~line_buf_full), // read enable low when line buffer full
                                     .feature_valid(conv1_feat_in_valid),
                                     .out_feature(conv1_feature_in));
 
-    conv #(.NUM_FILTERS(CONV_FILTERS))
-            conv_inst (.i_clk(clk),
-                       .i_rst(rst),
-                       .i_feature_valid(conv1_feat_in_valid),
-                       .i_feature(conv1_feature_in),
-                       .o_feature_valid(output_features_valid),
-                       .o_features(output_features),
-                       .o_buffer_full(line_buf_full));
+    conv conv_inst (.i_clk(clk),
+                    .i_rst(rst),
+                    .i_feature_valid(conv1_feat_in_valid),
+                    .i_feature(conv1_feature_in),
+                    .o_feature_valid(output_features_valid),
+                    .o_features(output_features),
+                    .o_buffer_full(line_buf_full));
     
-    post_processing #(.FEATURE_WIDTH(16),
-                      .FEATURES_DEPTH(CONV_FILTERS))
-                       post_processing_inst (.clk(clk),
-                                             .features_valid(output_features_valid),
-                                             .features_in(output_features),
-                                             .feature_out(feature_out));
+    post_processing post_processing_inst (.clk(clk),
+                                          .features_valid(output_features_valid),
+                                          .features_in(output_features),
+                                          .feature_out(feature_out));
     
     assign led = 2'b11;
     assign led_r = 1;

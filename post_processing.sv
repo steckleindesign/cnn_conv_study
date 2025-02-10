@@ -5,8 +5,8 @@
 
 module post_processing
     #(
-    parameter FEATURE_WIDTH  = 16,
-    parameter FEATURES_DEPTH = 6
+    localparam FEATURE_WIDTH  = 16,
+    localparam FEATURES_DEPTH = 6
     )(
     input clk,
     input features_valid,

@@ -38,7 +38,10 @@
 */
 //////////////////////////////////////////////////////////////////////////////////
 
-module conv #(localparam NUM_FILTERS = 6) (
+module conv
+    #(
+    localparam NUM_FILTERS = 6
+    )(
     input  logic               i_clk,
     input  logic               i_rst,
     input  logic               i_feature_valid,
@@ -46,7 +49,7 @@ module conv #(localparam NUM_FILTERS = 6) (
     output logic               o_feature_valid,
     output logic signed [15:0] o_features[0:NUM_FILTERS-1],
     output logic               o_buffer_full
-);
+    );
 
     // Hardcode frame dimensions in local params
     localparam string WEIGHTS_FILE  = "weights.mem";
@@ -150,12 +153,14 @@ module conv #(localparam NUM_FILTERS = 6) (
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
     // Flags
+    // Wires set as combinatorial logic
     logic macc_en;            // OK
     logic macc_ready;         // OK
     logic lb_full;
-    logic next_row;
+    logic next_row;           // OK
     logic consume_features;
     logic fill_next_start;
+    // Registers set in sequential processes
     logic fram_has_been_full;
     logic done_receiving;
     
@@ -184,7 +189,6 @@ module conv #(localparam NUM_FILTERS = 6) (
         
         // Check off by 1
         macc_ready = fram_row_ctr == (FILTER_SIZE-1);
-        
     end
     
     always_ff @(posedge i_clk)
@@ -246,9 +250,10 @@ module conv #(localparam NUM_FILTERS = 6) (
         end else begin
             // Review, seems incorrect, should not be shifting every cycle
             // Maybe just shift during the states which conv col cnt is incr?
-            for (int i = 0; i < FILTER_SIZE; i++) begin
-                feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][1:4]};
-            end
+            for (int i = 0; i < FILTER_SIZE; i++)
+                feature_window[i] <=
+                    {feature_rams[i][conv_col_ctr],
+                     feature_window[i][1:4]};
         end
     
     // Preload next initial feature window FSM
@@ -261,15 +266,19 @@ module conv #(localparam NUM_FILTERS = 6) (
     always_comb
         case(preload_state)
             IDLE: begin
-                if (fill_next_start) preload_next_state = FILL;
+                if (fill_next_start)
+                    preload_next_state = FILL;
             end
             FILL: begin
-                if (preload_col[2]) preload_next_state = SHIFT;
+                if (preload_col == FILTER_SIZE-1)
+                    preload_next_state = SHIFT;
             end
             SHIFT: begin
                 preload_next_state = IDLE;
             end
-            default: preload_next_state = preload_next_state;
+            default: begin
+                preload_next_state = preload_next_state;
+            end
         endcase
     
     // Next initial feature window actual filling logic
@@ -287,8 +296,9 @@ module conv #(localparam NUM_FILTERS = 6) (
             SHIFT: begin
                 // TODO: Is it possible to implement a column-wise shift operation to shorten this code?
                 for (int i = 0; i < FILTER_SIZE; i++) begin
-                    for (int j = 0; j < FILTER_SIZE-1; j++)
+                    for (int j = 0; j < FILTER_SIZE-1; j++) begin
                         next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
+                    end
                     next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
                 end
             end
@@ -449,13 +459,10 @@ module conv #(localparam NUM_FILTERS = 6) (
     
     always_ff @(posedge i_clk) begin
         static state_t valid_states[3] = '{ONE, TWO, FOUR};
-        if (macc_en) begin
-            for (int i = 0; i < 3; i++)
-                adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], state == valid_states[i]};
-        end else begin
-            for (int i = 0; i < 3; i++)
-                adder_tree_valid_sr[i] <= {adder_tree_valid_sr[i][5:0], 1'b0};
-        end
+        for (int i = 0; i < 3; i++)
+            adder_tree_valid_sr[i] <=
+                {adder_tree_valid_sr[i][5:0],
+                 macc_en ? state == valid_states[i] : 1'b0};
     end
     
     always_ff @(posedge i_clk)
@@ -473,6 +480,27 @@ module conv #(localparam NUM_FILTERS = 6) (
                 conv_col_ctr <= COL_START;
             end
         end
+        
+    /*
+    line buffer full set high means:
+    in the next clock cycle, conv feature input is to be processed,
+    in the following clock cycle, conv feature input is not to be processed
+    
+    line buffer full pulled low means:
+    next clock cycle, conv feature input will not have valid data
+    in the following clock cycle the feature input will be valid for processing
+    */
+    
+    /*
+    Currently
+    
+    line buffer is pulled high when:
+        feature valid AND feature RAM has not been full or consume features is true
+        or when done receiving
+    
+    line buffer is set high when:
+        
+    */
         
     // On power-up, need to set feature RAM "zero ring"
     always_ff @(posedge i_clk)
@@ -495,21 +523,22 @@ module conv #(localparam NUM_FILTERS = 6) (
                     fram_col_ctr <= fram_col_ctr + 1;
                     if (fram_col_ctr == COL_END) begin
                         fram_col_ctr <= COL_START;
-                        if (fram_row_ctr < FILTER_SIZE-1) begin // (~fram_row_ctr[2])
+                        if (fram_row_ctr < FILTER_SIZE-1) begin
                             fram_row_ctr <= fram_row_ctr + 1;
                         end
                     end
                 end else begin
                     // Check off by 1
-                    if ((fram_row_ctr == (FILTER_SIZE-1) && fram_col_ctr == (COL_END-1)) ||
-                        fram_has_been_full)
+                    if ((fram_row_ctr == (FILTER_SIZE-1) && fram_col_ctr == (COL_END-1)) || fram_has_been_full)
                         lb_full <= 1;
                 end
+            end else begin
+                lb_full <= 0;
             end
         end
     
+    assign o_feature_valid = |adder_tree_valid_bits;
     assign o_features      = macc_acc;
     assign o_buffer_full   = lb_full;
-    assign o_feature_valid = |adder_tree_valid_bits;
 
 endmodule
