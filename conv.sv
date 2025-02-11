@@ -153,14 +153,16 @@ module conv
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
     // Flags
-    // Wires set as combinatorial logic
+    // Wires driven by combinatorial logic
     logic macc_en;            // OK
     logic macc_ready;         // OK
-    logic lb_full;
+    logic almost_next_row;    // OK
     logic next_row;           // OK
-    logic consume_features;
-    logic fill_next_start;
+    logic consume_features;   // Check off-by-one
+    logic fill_next_start;    // Review timing
     // Registers set in sequential processes
+    logic take_feature;
+    logic process_feature;
     logic fram_has_been_full;
     logic done_receiving;
     
@@ -176,7 +178,8 @@ module conv
         // during the last 27 (or 28?) clock cycles of the current
         // convolution row operation.
         // Also used to control convolution counters
-        next_row = conv_col_ctr == COL_END && state == FIVE;
+        almost_next_row = conv_col_ctr == COL_END && state == FOUR;
+        next_row        = conv_col_ctr == COL_END && state == FIVE;
                 
         // Can start filling next preload block after the first 5 features
         // of the next row in the feature RAM are consumed.
@@ -185,28 +188,31 @@ module conv
         // because there is already read operations from the RAMs during that time
         // due to the shifting logic in the RAMs as features are consumed.
         // The next start values need to be preloaded before the next row of convolutions begin.
-        fill_next_start = conv_col_ctr == (COL_START+11) && state == THREE;
+        fill_next_start = conv_col_ctr == (COL_START+11);
         
         // Check off by 1
         macc_ready = fram_row_ctr == (FILTER_SIZE-1);
     end
     
+    // Control logic for feature consumption
     always_ff @(posedge i_clk)
         if (i_rst) begin
             fram_has_been_full <= 0;
             consume_features   <= 0;
             done_receiving     <= 0;
         end else begin
-            if (lb_full)
+            if (take_feature)
                 fram_has_been_full <= 1;
             
-            // Review
-            if (conv_col_ctr == (COL_START+10) && state == THREE)
-                consume_features <= 1;
-            else if (next_row)
+            // Should we add an "almost next row" signal
+            // so we can properly time toggling of
+            // feature FWFT FIFO read enable?
+            if (almost_next_row)
                 consume_features <= 0;
+            else if (i_feature_valid && (conv_col_ctr >= (COL_START+10) || ~fram_has_been_full))
+                consume_features <= 1;
             
-            if (conv_row_ctr == ROW_END && lb_full)
+            if (conv_row_ctr == ROW_END && take_feature)
                 done_receiving <= 1;
         end
     
@@ -243,18 +249,18 @@ module conv
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
+            // Do these feature windows need to be reset?
             feature_window              <= '{default: 0};
             next_initial_feature_window <= '{default: 0};
-        end else if (next_row | macc_ready) begin
+        end else if (next_row | macc_ready)
             feature_window <= next_initial_feature_window;
-        end else begin
+        else
             // Review, seems incorrect, should not be shifting every cycle
             // Maybe just shift during the states which conv col cnt is incr?
             for (int i = 0; i < FILTER_SIZE; i++)
                 feature_window[i] <=
                     {feature_rams[i][conv_col_ctr],
                      feature_window[i][1:4]};
-        end
     
     // Preload next initial feature window FSM
     always_ff @(posedge i_clk)
@@ -280,6 +286,18 @@ module conv
                 preload_next_state = preload_next_state;
             end
         endcase
+    
+    /*
+    Feature consumption and preloading control involve two operations
+    1) Consuming incoming features into feature RAMs
+    2) Preloading the next initial feature window
+    
+    Step 1 should start at the clock cycle which will result in the
+    feature consumption concluding the cycle prior to the next row start
+    
+    Step 2 should start once the first five features
+    of the next feature RAM have been stored
+    */
     
     // Next initial feature window actual filling logic
     // Need to handle first row initial feature window
@@ -462,7 +480,7 @@ module conv
         for (int i = 0; i < 3; i++)
             adder_tree_valid_sr[i] <=
                 {adder_tree_valid_sr[i][5:0],
-                 macc_en ? state == valid_states[i] : 1'b0};
+                 macc_en ? state == valid_states[i]: 1'b0};
     end
     
     always_ff @(posedge i_clk)
@@ -494,51 +512,62 @@ module conv
     /*
     Currently
     
-    line buffer is pulled high when:
+    line buffer is pulled low when:
         feature valid AND feature RAM has not been full or consume features is true
         or when done receiving
     
     line buffer is set high when:
         
-    */
         
+    */
+    
+    // There needs to be separate "take_feature" vs. "process_feature" signals
+    // "take_feature" needs to toggle 2 cycles before "process_feature"
+    
     // On power-up, need to set feature RAM "zero ring"
     always_ff @(posedge i_clk)
         if (i_rst) begin
             fram_row_ctr <= ROW_START;
             fram_col_ctr <= COL_START;
         end else begin
-            if (!done_receiving) begin
-                if (i_feature_valid && (~fram_has_been_full | consume_features)) begin
-                    // More specifically - "line buffer almost full"
-                    // TODO: Set the flag 1 cycle before full and 1 cycle before not-full
-                    lb_full <= 0;
-                    if (fram_has_been_full) begin
-                        for (int i = 0; i < FILTER_SIZE-1; i++) begin
-                            fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+            process_feature <= take_feature;
+            if (consume_features) begin
+                take_feature <= 0;
+                
+                // Feature RAM filling logic
+                if (fram_has_been_full)
+                begin
+                    // RAM value swapping for efficient feature consumption
+                    for (int i = 0; i < FILTER_SIZE-1; i++)
+                        fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+                    // Place back swap values into feature RAMs
+                    if (process_feature)
+                        for (int i = 0; i < FILTER_SIZE-1; i++)
                             feature_rams[i][fram_col_ctr] <= fram_swap_regs[i];
-                        end
-                    end
-                    feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
-                    fram_col_ctr <= fram_col_ctr + 1;
-                    if (fram_col_ctr == COL_END) begin
-                        fram_col_ctr <= COL_START;
-                        if (fram_row_ctr < FILTER_SIZE-1) begin
-                            fram_row_ctr <= fram_row_ctr + 1;
-                        end
-                    end
-                end else begin
-                    // Check off by 1
-                    if ((fram_row_ctr == (FILTER_SIZE-1) && fram_col_ctr == (COL_END-1)) || fram_has_been_full)
-                        lb_full <= 1;
                 end
+                
+                // Consume input feature from FWFT FIFO
+                if (process_feature)
+                    feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
+                
+                // Feature RAM addr control logic
+                fram_col_ctr <= fram_col_ctr + 1;
+                if (fram_col_ctr == COL_END)
+                    fram_col_ctr <= COL_START;
+                    fram_row_ctr <=
+                        fram_row_ctr < FILTER_SIZE-1 ? fram_row_ctr+1
+                                                     : FILTER_SIZE-1;
             end else begin
-                lb_full <= 0;
+                // Check off-by-one
+                if ((fram_row_ctr == (FILTER_SIZE-1)
+                    && fram_col_ctr == (COL_END-1))
+                    || fram_has_been_full)
+                    take_feature <= 1;
             end
         end
     
     assign o_feature_valid = |adder_tree_valid_bits;
     assign o_features      = macc_acc;
-    assign o_buffer_full   = lb_full;
+    assign o_buffer_full   = take_feature;
 
 endmodule
