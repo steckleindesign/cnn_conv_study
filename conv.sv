@@ -158,11 +158,11 @@ module conv
     logic macc_ready;         // OK
     logic almost_next_row;    // OK
     logic next_row;           // OK
-    logic consume_features;   // Check off-by-one
+    logic consume_features;   // OK
     logic fill_next_start;    // Review timing
     // Registers set in sequential processes
-    logic take_feature;
-    logic process_feature;
+    logic take_feature;       // OK
+    logic process_feature;    // OK
     logic fram_has_been_full;
     logic done_receiving;
     
@@ -197,20 +197,20 @@ module conv
     // Control logic for feature consumption
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            fram_has_been_full <= 0;
             consume_features   <= 0;
             done_receiving     <= 0;
         end else begin
-            if (take_feature)
-                fram_has_been_full <= 1;
-            
             // Should we add an "almost next row" signal
             // so we can properly time toggling of
             // feature FWFT FIFO read enable?
-            if (almost_next_row)
+            if (next_row)
                 consume_features <= 0;
-            else if (i_feature_valid && (conv_col_ctr >= (COL_START+10) || ~fram_has_been_full))
+            else if (i_feature_valid &&
+                    ((conv_col_ctr == (COL_START+12) && state == THREE)
+                    || ~fram_has_been_full))
+            begin
                 consume_features <= 1;
+            end
             
             if (conv_row_ctr == ROW_END && take_feature)
                 done_receiving <= 1;
@@ -527,12 +527,16 @@ module conv
     // On power-up, need to set feature RAM "zero ring"
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            fram_row_ctr <= ROW_START;
-            fram_col_ctr <= COL_START;
+            fram_has_been_full <= 0;
+            fram_row_ctr       <= ROW_START;
+            fram_col_ctr       <= COL_START;
         end else begin
             process_feature <= take_feature;
             if (consume_features) begin
+            
                 take_feature <= 1;
+                if (almost_next_row)
+                    take_feature <= 0;
                 
                 // Feature RAM filling logic
                 if (fram_has_been_full)
@@ -559,11 +563,7 @@ module conv
                         fram_row_ctr < FILTER_SIZE-1 ? fram_row_ctr+1
                                                      : FILTER_SIZE-1;
             end else begin
-                // Check off-by-one
-                if ((fram_row_ctr == (FILTER_SIZE-1)
-                    && fram_col_ctr == (COL_END-1))
-                    || fram_has_been_full)
-                    take_feature <= 0;
+                fram_has_been_full <= 1;
             end
         end
     
