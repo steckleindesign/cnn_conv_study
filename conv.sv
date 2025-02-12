@@ -532,14 +532,15 @@ module conv
         end else begin
             process_feature <= take_feature;
             if (consume_features) begin
-                take_feature <= 0;
+                take_feature <= 1;
                 
                 // Feature RAM filling logic
                 if (fram_has_been_full)
                 begin
                     // RAM value swapping for efficient feature consumption
-                    for (int i = 0; i < FILTER_SIZE-1; i++)
-                        fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+                    if (take_feature)
+                        for (int i = 0; i < FILTER_SIZE-1; i++)
+                            fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
                     // Place back swap values into feature RAMs
                     if (process_feature)
                         for (int i = 0; i < FILTER_SIZE-1; i++)
@@ -562,7 +563,7 @@ module conv
                 if ((fram_row_ctr == (FILTER_SIZE-1)
                     && fram_col_ctr == (COL_END-1))
                     || fram_has_been_full)
-                    take_feature <= 1;
+                    take_feature <= 0;
             end
         end
     
