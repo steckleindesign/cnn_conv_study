@@ -163,8 +163,14 @@ module conv
     // Registers set in sequential processes
     logic take_feature;       // OK
     logic process_feature;    // OK
-    logic fram_has_been_full;
-    logic done_receiving;
+    logic fram_has_been_full; // OK
+    logic done_receiving;     // OK
+    
+    // Feature consumption logic should
+    // consume conv_row+1 features,
+    // so that next initial feature window
+    // can preload the necessary features
+    // before the next row operations begin
     
     // Flags - TODO: Review
     always_comb begin
@@ -190,15 +196,14 @@ module conv
         // The next start values need to be preloaded before the next row of convolutions begin.
         fill_next_start = conv_col_ctr == (COL_START+11);
         
-        // Check off by 1
         macc_ready = fram_row_ctr == (FILTER_SIZE-1);
     end
     
     // Control logic for feature consumption
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            consume_features   <= 0;
-            done_receiving     <= 0;
+            consume_features <= 0;
+            done_receiving   <= 0;
         end else begin
             // Should we add an "almost next row" signal
             // so we can properly time toggling of
@@ -206,13 +211,13 @@ module conv
             if (next_row)
                 consume_features <= 0;
             else if (i_feature_valid &&
-                    ((conv_col_ctr == (COL_START+12) && state == THREE)
+                    ((conv_col_ctr == (COL_START+11) && state == TWO)
                     || ~fram_has_been_full))
             begin
                 consume_features <= 1;
             end
             
-            if (conv_row_ctr == ROW_END && take_feature)
+            if (conv_row_ctr == ROW_END && almost_next_row)
                 done_receiving <= 1;
         end
     
@@ -557,13 +562,13 @@ module conv
                 
                 // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
-                if (fram_col_ctr == COL_END)
+                if (fram_col_ctr == COL_END) begin
                     fram_col_ctr <= COL_START;
-                    fram_row_ctr <=
-                        fram_row_ctr < FILTER_SIZE-1 ? fram_row_ctr+1
-                                                     : FILTER_SIZE-1;
-            end else begin
-                fram_has_been_full <= 1;
+                    if (fram_row_ctr == FILTER_SIZE-1)
+                        fram_has_been_full <= 1;
+                    else
+                        fram_row_ctr <= fram_row_ctr+1;
+                end
             end
         end
     
