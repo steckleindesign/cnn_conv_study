@@ -164,7 +164,7 @@ module conv
     logic take_feature;       // OK
     logic process_feature;    // OK
     logic fram_has_been_full; // OK
-    logic done_receiving;     // OK
+    logic done_receiving;     // OK, unused
     
     // Feature consumption logic should
     // consume conv_row+1 features,
@@ -196,7 +196,7 @@ module conv
         // The next start values need to be preloaded before the next row of convolutions begin.
         fill_next_start = conv_col_ctr == (COL_START+11);
         
-        macc_ready = fram_row_ctr == (FILTER_SIZE-1);
+        macc_ready = fram_has_been_full;
     end
     
     // Control logic for feature consumption
@@ -217,7 +217,7 @@ module conv
                 consume_features <= 1;
             end
             
-            if (conv_row_ctr == ROW_END && almost_next_row)
+            if (conv_row_ctr == ROW_END)
                 done_receiving <= 1;
         end
     
@@ -302,6 +302,35 @@ module conv
     
     Step 2 should start once the first five features
     of the next feature RAM have been stored
+    
+    Two logical errors currently
+    1) Preloading the next initial feature window operations
+       occur on overlapping clock cycles as input feature consumption
+    2) We load in next row features before we have finished processing
+       the current row of convolutions
+    
+    Solutions
+    1) Instead of separating the logic for loading
+       the next initial feature window and the consumption
+       of the next rows features, we should inject the
+       first five incoming features into the initial feature window
+       directly.
+    
+    2) Instead of continuously consuming features after a flag
+       has been set. As the current convolution rows features are
+       retired from use, we can consume an additional feature.
+       So the first feature of the next row can be consumed
+       after the current convolution row is done using its first
+       feature column. The last feature will be consumed on the same
+       clock cycle as the last operation in the convolution row occurs.
+       
+    Future work
+    Consume the earlier column features after a certain number of 
+    operations in the current convolution row, and consume the
+    latter column features at the beginning of the next row features.
+    So for the first several operations of the current convolution, the latter
+    column features are being consumed.
+    
     */
     
     // Next initial feature window actual filling logic
@@ -503,33 +532,8 @@ module conv
                 conv_col_ctr <= COL_START;
             end
         end
-        
-    /*
-    line buffer full set high means:
-    in the next clock cycle, conv feature input is to be processed,
-    in the following clock cycle, conv feature input is not to be processed
     
-    line buffer full pulled low means:
-    next clock cycle, conv feature input will not have valid data
-    in the following clock cycle the feature input will be valid for processing
-    */
-    
-    /*
-    Currently
-    
-    line buffer is pulled low when:
-        feature valid AND feature RAM has not been full or consume features is true
-        or when done receiving
-    
-    line buffer is set high when:
-        
-        
-    */
-    
-    // There needs to be separate "take_feature" vs. "process_feature" signals
-    // "take_feature" needs to toggle 2 cycles before "process_feature"
-    
-    // On power-up, need to set feature RAM "zero ring"
+    // TODO: On power-up, need to set feature RAM "zero ring"
     always_ff @(posedge i_clk)
         if (i_rst) begin
             fram_has_been_full <= 0;
@@ -559,6 +563,10 @@ module conv
                 // Consume input feature from FWFT FIFO
                 if (process_feature)
                     feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
+                
+                // Takes 27*3=81 clock cycles for FRAM to become full
+                // MACC enable set after 27*2=54 clock cycles
+                // For logic simplicity, FRAM should become full 
                 
                 // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
