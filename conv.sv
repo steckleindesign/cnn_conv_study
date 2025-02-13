@@ -87,37 +87,32 @@ module conv
     // Make sure distributed RAMs are synthesized
     // These feature RAMs are essentially line buffers
     logic         [7:0] feature_rams [0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
+    
     // The actual feature window to be multiplied by the filter kernel
     logic         [7:0] feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
+    
     // We buffer the initial feature window of the next row
     // It loads during convolution operation of the preceeding row
     logic         [7:0] next_initial_feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
+    // Registers to hold temporary feature RAM data
+    // as part of the input feature consumption logic
     logic signed [15:0] fram_swap_regs[0:NUM_FILTERS-2];
     
     // Signals holding the DSP48E1 operands, used for readability
     logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
     logic signed [15:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
+    
     // All 90 DSP48E1 outputs
     logic signed [15:0] mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*3-1];
     
     // Feature RAM location
     logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
     logic [$clog2(COL_END)-1:0]     fram_col_ctr;
+    
     // Convolution Feature location
-    // Is conv row cnt needed?
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
-    
-    logic [2:0] preload_col;
-    
-    // FSM for preloading the initial feature window of the next row
-    typedef enum logic [2:0] {
-        IDLE, FILL, SHIFT
-    } preload_state_t;
-    preload_state_t preload_state, preload_next_state;
-    // Column location of the preload operation, treated as the address to the feature RAMs
-    // for the sake of filling the initial feauture window of the next row
     
     // Convolution FSM, controls DSP48E1 time multiplexing,
     // and convolution feature counters
@@ -153,50 +148,25 @@ module conv
     logic signed [15:0] macc_acc[0:NUM_FILTERS-1];
     
     // Flags
+    
     // Wires driven by combinatorial logic
     logic macc_en;            // OK
     logic macc_ready;         // OK
     logic almost_next_row;    // OK
     logic next_row;           // OK
     logic consume_features;   // OK
-    logic fill_next_start;    // Review timing
+    
     // Registers set in sequential processes
     logic take_feature;       // OK
     logic process_feature;    // OK
     logic fram_has_been_full; // OK
     logic done_receiving;     // OK, unused
     
-    // Feature consumption logic should
-    // consume conv_row+1 features,
-    // so that next initial feature window
-    // can preload the necessary features
-    // before the next row operations begin
-    
-    // Flags - TODO: Review
+    // Flags
     always_comb begin
-        // This flag is set when the next clock cycle will be the
-        // first operation in the next row of convolutions
-        // Used to load in the initial feature window values
-        // of the following row convolution operation
-        // Also used to control when to stop consuming new features
-        // from the feature input FIFO. After the feature RAMs have
-        // been filled before, each next row of features are consumed
-        // during the last 27 (or 28?) clock cycles of the current
-        // convolution row operation.
-        // Also used to control convolution counters
         almost_next_row = conv_col_ctr == COL_END && state == FOUR;
         next_row        = conv_col_ctr == COL_END && state == FIVE;
-                
-        // Can start filling next preload block after the first 5 features
-        // of the next row in the feature RAM are consumed.
-        // It doesn't have to be exactly 5 cycles later, but ideally this operation
-        // would not collide with consuming input features into the feature RAMs
-        // because there is already read operations from the RAMs during that time
-        // due to the shifting logic in the RAMs as features are consumed.
-        // The next start values need to be preloaded before the next row of convolutions begin.
-        fill_next_start = conv_col_ctr == (COL_START+11);
-        
-        macc_ready = fram_has_been_full;
+        macc_ready      = fram_has_been_full;
     end
     
     // Control logic for feature consumption
@@ -205,17 +175,11 @@ module conv
             consume_features <= 0;
             done_receiving   <= 0;
         end else begin
-            // Should we add an "almost next row" signal
-            // so we can properly time toggling of
-            // feature FWFT FIFO read enable?
             if (next_row)
                 consume_features <= 0;
             else if (i_feature_valid &&
                     ((conv_col_ctr == (COL_START+11) && state == TWO)
-                    || ~fram_has_been_full))
-            begin
-                consume_features <= 1;
-            end
+                    || ~fram_has_been_full)) consume_features <= 1;
             
             if (conv_row_ctr == ROW_END)
                 done_receiving <= 1;
@@ -254,43 +218,18 @@ module conv
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            // Do these feature windows need to be reset?
+            // Review: Do these feature windows need to be reset?
             feature_window              <= '{default: 0};
             next_initial_feature_window <= '{default: 0};
         end else if (next_row | macc_ready)
             feature_window <= next_initial_feature_window;
         else
-            // Review, seems incorrect, should not be shifting every cycle
+            // Review: seems incorrect, should not be shifting every cycle
             // Maybe just shift during the states which conv col cnt is incr?
             for (int i = 0; i < FILTER_SIZE; i++)
                 feature_window[i] <=
                     {feature_rams[i][conv_col_ctr],
                      feature_window[i][1:4]};
-    
-    // Preload next initial feature window FSM
-    always_ff @(posedge i_clk)
-        if (i_rst)
-            preload_state <= IDLE;
-        else
-            preload_state <= preload_next_state;
-    
-    always_comb
-        case(preload_state)
-            IDLE: begin
-                if (fill_next_start)
-                    preload_next_state = FILL;
-            end
-            FILL: begin
-                if (preload_col == FILTER_SIZE-1)
-                    preload_next_state = SHIFT;
-            end
-            SHIFT: begin
-                preload_next_state = IDLE;
-            end
-            default: begin
-                preload_next_state = preload_next_state;
-            end
-        endcase
     
     /*
     Feature consumption and preloading control involve two operations
@@ -329,47 +268,52 @@ module conv
     operations in the current convolution row, and consume the
     latter column features at the beginning of the next row features.
     So for the first several operations of the current convolution, the latter
-    column features are being consumed.
+    column features are being consumed
+    
+    Notes
+    Feature consumption logic should consume conv_row+1 features,
+    so that next initial feature window can preload the necessary
+    features before the next row operations begin
+    
+    Study the performance hit when using a fixed
+    addition/subtraction on memory addressing
     
     */
     
     // Next initial feature window actual filling logic
-    // Need to handle first row initial feature window
-    always_ff @(posedge i_clk)
-        case(preload_state)
-            IDLE: begin
-                preload_col <= 3'b0;
+    // TODO: Handle first row initial feature window
+    always_ff @(posedge i_clk) begin
+        // Input feature fans out to this preloading logic
+        // as well as the feature RAM consumption logic
+        if (fram_col_ctr <= (COL_START + FILTER_SIZE - 1))
+            next_initial_feature_window[0][fram_col_ctr-2] <= i_feature;
+        
+        // Align data when the preload block is full
+        if (fram_col_ctr == (COL_START + FILTER_SIZE)) begin
+            // TODO: Is it possible to implement a column-wise
+            //       shift operation to shorten this code?
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                for (int j = 0; j < FILTER_SIZE-1; j++)
+                    next_initial_feature_window[j][i]
+                        <= next_initial_feature_window[j+1][i];
+                next_initial_feature_window[FILTER_SIZE-1][i]
+                    <= next_initial_feature_window[0][i];
             end
-            FILL: begin
-                // Review
-                next_initial_feature_window[0][preload_col] <= feature_rams[FILTER_SIZE-1][preload_col];
-                preload_col <= preload_col + 1;
-            end
-            SHIFT: begin
-                // TODO: Is it possible to implement a column-wise shift operation to shorten this code?
-                for (int i = 0; i < FILTER_SIZE; i++) begin
-                    for (int j = 0; j < FILTER_SIZE-1; j++) begin
-                        next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
-                    end
-                    next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
-                end
-            end
-        endcase
+        end
+    end
     
-    // TODO: Syntax simplify
-    /*
-    for each adder tree
-        set constant where mult out index is for adder stage 1
-            based on this value, set rest of adder tree mult out connections
-        compute and set adder stage x registers based on adder stage x-1 registers
-    */
+//    TODO: Syntax simplify
+//          for each adder tree
+//              set constant where mult out index is for adder stage 1
+//                  based on this value, set rest of adder tree mult out connections
+//              compute and set adder stage x registers based on adder stage x-1 registers
     always_ff @(posedge i_clk) begin
         if (macc_en) begin
             for (int i = 0; i < NUM_FILTERS; i++) begin
                 // Adder tree structure 1
-                adder1_stage1[i]        <= mult_out[i];
+                adder1_stage1[i] <= mult_out[i];
                 
-                adder1_stage2[i][17]    <= adder1_stage1[i][15];
+                adder1_stage2[i][17] <= adder1_stage1[i][15];
                 for (int j = 0; j < 7; j++)
                     adder1_stage2[i][10+j] <= adder1_stage1[i][j*2] + adder1_stage1[i][j*2+1];
                 adder1_stage2[i][0:9]   <= mult_out[i][0:9];
@@ -378,49 +322,49 @@ module conv
                     adder1_stage3[i][j] <= adder1_stage2[i][j*2] + adder1_stage2[i][j*2+1];
                 
                 // Can stage 4 5th reg just directly be connected to stage 6 1st reg?
-                adder1_stage4[i][4]     <= adder1_stage3[i][8];
+                adder1_stage4[i][4] <= adder1_stage3[i][8];
                 for (int j = 0; j < 4; j++)
                     adder1_stage4[i][j] <= adder1_stage3[i][j*2] + adder1_stage3[i][j*2+1];
                 
-                adder1_stage5[i][2]     <= adder1_stage4[i][4];
+                adder1_stage5[i][2] <= adder1_stage4[i][4];
                 for (int j = 0; j < 2; j++)
                     adder1_stage5[i][j] <= adder1_stage4[i][j*2] + adder1_stage4[i][j*2+1];
                 
-                adder1_stage6[i][1]     <= adder1_stage5[i][2];
-                adder1_stage6[i][0]     <= adder1_stage5[i][0] + adder1_stage5[i][1];
+                adder1_stage6[i][1] <= adder1_stage5[i][2];
+                adder1_stage6[i][0] <= adder1_stage5[i][0] + adder1_stage5[i][1];
                 
-                adder1_result[i]        <= adder1_stage6[i][1] + adder1_stage6[i][0];
+                adder1_result[i] <= adder1_stage6[i][1] + adder1_stage6[i][0];
                 
                 // Adder tree structure 2
-                adder2_stage1[i]        <= mult_out[i][10:14];
+                adder2_stage1[i] <= mult_out[i][10:14];
                 
-                adder2_stage2[i][17]    <= adder2_stage1[i][4];
+                adder2_stage2[i][17] <= adder2_stage1[i][4];
                 for (int j = 0; j < 2; j++)
                     adder2_stage2[i][j] <= adder2_stage1[i][j*2] + adder2_stage1[i][j*2+1];
-                adder2_stage2[i][0:14]  <= mult_out[i];
+                adder2_stage2[i][0:14] <= mult_out[i];
                 
                 for (int j = 0; j < 9; j++)
                     adder2_stage3[i][j+5] <= adder2_stage2[i][j*2] + adder2_stage2[i][j*2+1];
-                adder2_stage3[i][0:4]   <= mult_out[i][0:4];
+                adder2_stage3[i][0:4] <= mult_out[i][0:4];
                 
                 for (int j = 0; j < 7; j++)
                     adder2_stage4[i][j+5] <= adder2_stage3[i][j*2] + adder2_stage3[i][j*2+1];
                 
-                adder2_stage5[i][3]     <= adder2_stage4[i][6];
+                adder2_stage5[i][3] <= adder2_stage4[i][6];
                 for (int j = 0; j < 3; j++)
                     adder2_stage5[i][j] <= adder2_stage4[i][j*2] + adder2_stage4[i][j*2+1];
                 
                 for (int j = 0; j < 2; j++)
                     adder2_stage6[i][j+5] <= adder2_stage5[i][j*2] + adder2_stage5[i][j*2+1];
                 
-                adder2_result[i]        <= adder2_stage6[i][1] + adder2_stage6[i][0];
+                adder2_result[i] <= adder2_stage6[i][1] + adder2_stage6[i][0];
                 
                 // Adder tree structure 3
-                adder3_stage1[i][0:9]   <= mult_out[i][5:14];
+                adder3_stage1[i][0:9] <= mult_out[i][5:14];
                 
                 for (int j = 0; j < 5; j++)
                     adder3_stage2[i][j+15] <= adder3_stage1[i][j*2] + adder3_stage1[i][j*2+1];
-                adder3_stage2[i][0:14]  <= mult_out[i];
+                adder3_stage2[i][0:14] <= mult_out[i];
                 
                 for (int j = 0; j < 10; j++)
                     adder3_stage3[i][j] <= adder3_stage2[i][j*2] + adder3_stage2[i][j*2+1];
@@ -432,10 +376,10 @@ module conv
                 for (int j = 0; j < 2; j++)
                     adder3_stage5[i][j] <= adder3_stage4[i][j*2] + adder3_stage4[i][j*2+1];
                 
-                adder3_stage6[i][1]     <= adder3_stage5[i][2];
-                adder3_stage6[i][0]     <= adder3_stage5[i][0] + adder3_stage5[i][1];
+                adder3_stage6[i][1] <= adder3_stage5[i][2];
+                adder3_stage6[i][0] <= adder3_stage5[i][0] + adder3_stage5[i][1];
                 
-                adder3_result[i]        <= adder3_stage6[i][1] + adder3_stage6[i][0];
+                adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
             end
         end
     end
@@ -484,7 +428,7 @@ module conv
         assign_weight_operands(weight_offsets);
     end
     
-    // Review, definitely incorrect -> conv_col_ctr+offsets[j]
+    // Review: Logically incorrect -> conv_col_ctr+offsets[j]
     task assign_feature_operands(input int offsets[3]);
         for (int i = 0; i < FILTER_SIZE; i++)
             for (int j = 0; j < 3; j++)
@@ -505,10 +449,12 @@ module conv
                     mult_out[i][k*5+j] <= weight_operands[i][j][k]
                                             * $signed(feature_operands[j][k]);
     
+    // Increment convolution column location on specific states
     always_ff @(posedge i_clk)
         if (macc_en && (state == TWO | state == FOUR | state == FIVE))
             conv_col_ctr <= conv_col_ctr + 1;
     
+    // Shift adder tree valid signal shift register
     always_ff @(posedge i_clk) begin
         static state_t valid_states[3] = '{ONE, TWO, FOUR};
         for (int i = 0; i < 3; i++)
@@ -523,8 +469,6 @@ module conv
             conv_row_ctr <= ROW_START;
             conv_col_ctr <= COL_START;
         end else begin
-            // Enable MACC operations when feature RAMs are full enough
-            // for the first convolution window/kernel operation
             if (macc_ready)
                 macc_en <= 1;
             if (next_row) begin
@@ -542,7 +486,8 @@ module conv
         end else begin
             process_feature <= take_feature;
             if (consume_features) begin
-            
+                // Feature consumption control signal sent
+                // to FWFT FIFO read enable port
                 take_feature <= 1;
                 if (almost_next_row)
                     take_feature <= 0;
@@ -550,11 +495,9 @@ module conv
                 // Feature RAM filling logic
                 if (fram_has_been_full)
                 begin
-                    // RAM value swapping for efficient feature consumption
                     if (take_feature)
                         for (int i = 0; i < FILTER_SIZE-1; i++)
                             fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
-                    // Place back swap values into feature RAMs
                     if (process_feature)
                         for (int i = 0; i < FILTER_SIZE-1; i++)
                             feature_rams[i][fram_col_ctr] <= fram_swap_regs[i];
@@ -566,7 +509,8 @@ module conv
                 
                 // Takes 27*3=81 clock cycles for FRAM to become full
                 // MACC enable set after 27*2=54 clock cycles
-                // For logic simplicity, FRAM should become full 
+                // For logic simplicity, FRAM should become full
+                // before MACC is enabled
                 
                 // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
