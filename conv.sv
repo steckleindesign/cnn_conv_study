@@ -150,23 +150,24 @@ module conv
     // Flags
     
     // Wires driven by combinatorial logic
-    logic macc_en;            // OK
-    logic macc_ready;         // OK
-    logic almost_next_row;    // OK
-    logic next_row;           // OK
-    logic consume_features;   // OK
+    logic macc_en;               // OK
+    logic macc_ready;            // OK
+    logic next_row;              // OK
+    logic consume_features;      // OK
+    logic almost_done_consuming; // OK
     
     // Registers set in sequential processes
-    logic take_feature;       // OK
-    logic process_feature;    // OK
-    logic fram_has_been_full; // OK
-    logic done_receiving;     // OK, unused
+    logic take_feature;          // OK
+    logic process_feature;       // OK
+    logic fram_has_been_full;    // OK
+    logic done_receiving;        // OK, unused
     
     // Flags
     always_comb begin
-        almost_next_row = conv_col_ctr == COL_END && state == FOUR;
-        next_row        = conv_col_ctr == COL_END && state == FIVE;
-        macc_ready      = fram_has_been_full;
+        // Should work, but is there a more optimal starting point?
+        almost_done_consuming = fram_col_ctr == (COL_END-1);
+        next_row              = conv_col_ctr == COL_END && state == FIVE;
+        macc_ready            = fram_has_been_full;
     end
     
     // Control logic for feature consumption
@@ -178,7 +179,7 @@ module conv
             if (next_row)
                 consume_features <= 0;
             else if (i_feature_valid &&
-                    ((conv_col_ctr == (COL_START+11) && state == TWO)
+                    ((conv_col_ctr == (COL_END-10) && state == FOUR)
                     || ~fram_has_been_full)) consume_features <= 1;
             
             if (conv_row_ctr == ROW_END)
@@ -231,57 +232,28 @@ module conv
                     {feature_rams[i][conv_col_ctr],
                      feature_window[i][1:4]};
     
+    
+    // Takes 27*3=81 clock cycles for FRAM to become full
+    // MACC enable set after 27*2=54 clock cycles
+    // For logic simplicity, FRAM should become full
+    // before MACC is enabled
+    
     /*
-    Feature consumption and preloading control involve two operations
-    1) Consuming incoming features into feature RAMs
-    2) Preloading the next initial feature window
-    
-    Step 1 should start at the clock cycle which will result in the
-    feature consumption concluding the cycle prior to the next row start
-    
-    Step 2 should start once the first five features
-    of the next feature RAM have been stored
-    
-    Two logical errors currently
-    1) Preloading the next initial feature window operations
-       occur on overlapping clock cycles as input feature consumption
-    2) We load in next row features before we have finished processing
-       the current row of convolutions
-    
-    Solutions
-    1) Instead of separating the logic for loading
-       the next initial feature window and the consumption
-       of the next rows features, we should inject the
-       first five incoming features into the initial feature window
-       directly.
-    
-    2) Instead of continuously consuming features after a flag
-       has been set. As the current convolution rows features are
-       retired from use, we can consume an additional feature.
-       So the first feature of the next row can be consumed
-       after the current convolution row is done using its first
-       feature column. The last feature will be consumed on the same
-       clock cycle as the last operation in the convolution row occurs.
-       
-    Future work
     Consume the earlier column features after a certain number of 
     operations in the current convolution row, and consume the
     latter column features at the beginning of the next row features.
     So for the first several operations of the current convolution, the latter
     column features are being consumed
     
-    Notes
-    Feature consumption logic should consume conv_row+1 features,
-    so that next initial feature window can preload the necessary
-    features before the next row operations begin
+    Feature consumption logic should consume conv_row+1 features, so that next initial
+    feature window can preload the necessary features before the next row operations begin
     
-    Study the performance hit when using a fixed
-    addition/subtraction on memory addressing
+    Study the performance hit when using a fixed addition/subtraction on memory addressing
     
     */
     
-    // Next initial feature window actual filling logic
     // TODO: Handle first row initial feature window
+    // Next initial feature window data alignment
     always_ff @(posedge i_clk) begin
         // Input feature fans out to this preloading logic
         // as well as the feature RAM consumption logic
@@ -489,7 +461,7 @@ module conv
                 // Feature consumption control signal sent
                 // to FWFT FIFO read enable port
                 take_feature <= 1;
-                if (almost_next_row)
+                if (almost_done_consuming)
                     take_feature <= 0;
                 
                 // Feature RAM filling logic
@@ -506,11 +478,6 @@ module conv
                 // Consume input feature from FWFT FIFO
                 if (process_feature)
                     feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
-                
-                // Takes 27*3=81 clock cycles for FRAM to become full
-                // MACC enable set after 27*2=54 clock cycles
-                // For logic simplicity, FRAM should become full
-                // before MACC is enabled
                 
                 // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
