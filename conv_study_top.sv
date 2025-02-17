@@ -27,9 +27,9 @@ module conv_study_top (
 
     localparam NUM_CONV_FILTERS = 6;
 
-    logic               line_buf_full;
     logic               conv1_feat_in_valid;
     logic         [7:0] conv1_feature_in;
+    logic               receive_feature;
     
     logic               output_features_valid;
     logic signed [15:0] output_features[NUM_CONV_FILTERS];
@@ -37,7 +37,7 @@ module conv_study_top (
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),
                                     .in_feature(feature_in),
-                                    .rd_en(~line_buf_full), // read enable low when line buffer full
+                                    .rd_en(receive_feature),
                                     .feature_valid(conv1_feat_in_valid),
                                     .out_feature(conv1_feature_in));
 
@@ -47,7 +47,7 @@ module conv_study_top (
                     .i_feature(conv1_feature_in),
                     .o_feature_valid(output_features_valid),
                     .o_features(output_features),
-                    .o_buffer_full(line_buf_full));
+                    .o_ready_feature(receive_feature));
     
     post_processing post_processing_inst (.clk(clk),
                                           .features_valid(output_features_valid),
