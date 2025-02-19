@@ -606,7 +606,7 @@ module conv
     state_t state, next_state;
     
     // Adder Tree
-    logic         [6:0] adder_tree_valid_sr[0:2];
+    logic         [7:0] adder_tree_valid_sr[0:2];
     logic         [2:0] adder_tree_valid_bits;
     logic signed [15:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
     logic signed [15:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
@@ -712,83 +712,109 @@ module conv
 //              set constant where mult out index is for adder stage 1
 //                  based on this value, set rest of adder tree mult out connections
 //              compute and set adder stage x registers based on adder stage x-1 registers
-    always_ff @(posedge i_clk)
-        for (int i = 0; i < NUM_FILTERS; i++) begin
-            // Adder tree structure 1
-            adder1_stage1[i] <= mult_out[i];
-            
-            adder1_stage2[i][17] <= adder1_stage1[i][14];
-            adder1_stage2[i][0:9] <= mult_out[i][0:9];
-            for (int j = 0; j < 7; j++)
-                adder1_stage2[i][10+j] <= adder1_stage1[i][j*2] + adder1_stage1[i][j*2+1];
-            
-            for (int j = 0; j < 9; j++)
-                adder1_stage3[i][j] <= adder1_stage2[i][j*2] + adder1_stage2[i][j*2+1];
-            
-            adder1_stage4[i][4] <= adder1_stage3[i][8];
-            for (int j = 0; j < 4; j++)
-                adder1_stage4[i][j] <= adder1_stage3[i][j*2] + adder1_stage3[i][j*2+1];
-            
-            adder1_stage5[i][2] <= adder1_stage4[i][4];
-            for (int j = 0; j < 2; j++)
-                adder1_stage5[i][j] <= adder1_stage4[i][j*2] + adder1_stage4[i][j*2+1];
-            
-            adder1_stage6[i][1] <= adder1_stage5[i][2];
-            adder1_stage6[i][0] <= adder1_stage5[i][0] + adder1_stage5[i][1];
-            
-            adder1_result[i] <= adder1_stage6[i][1] + adder1_stage6[i][0];
-            
-            // Adder tree structure 2
-            adder2_stage1[i] <= mult_out[i][10:14];
-            
-            adder2_stage2[i][17] <= adder2_stage1[i][4];
-            adder2_stage2[i][0:14] <= mult_out[i];
-            for (int j = 0; j < 2; j++)
-                adder2_stage2[i][j+15] <= adder2_stage1[i][j*2] + adder2_stage1[i][j*2+1];
-            
-            for (int j = 0; j < 9; j++)
-                adder2_stage3[i][j+5] <= adder2_stage2[i][j*2] + adder2_stage2[i][j*2+1];
-            adder2_stage3[i][0:4] <= mult_out[i][0:4];
-            
-            for (int j = 0; j < 7; j++)
-                adder2_stage4[i][j] <= adder2_stage3[i][j*2] + adder2_stage3[i][j*2+1];
-            
-            adder2_stage5[i][3] <= adder2_stage4[i][6];
-            for (int j = 0; j < 3; j++)
-                adder2_stage5[i][j] <= adder2_stage4[i][j*2] + adder2_stage4[i][j*2+1];
-            
-            for (int j = 0; j < 2; j++)
-                adder2_stage6[i][j] <= adder2_stage5[i][j*2] + adder2_stage5[i][j*2+1];
-            
-            adder2_result[i] <= adder2_stage6[i][1] + adder2_stage6[i][0];
-            
-            // Adder tree structure 3
-            adder3_stage1[i][0:9] <= mult_out[i][5:14];
-            
-            for (int j = 0; j < 5; j++)
-                adder3_stage2[i][j+15] <= adder3_stage1[i][j*2] + adder3_stage1[i][j*2+1];
-            adder3_stage2[i][0:14] <= mult_out[i];
-            
-            for (int j = 0; j < 10; j++)
-                adder3_stage3[i][j] <= adder3_stage2[i][j*2] + adder3_stage2[i][j*2+1];
-            
-            for (int j = 0; j < 5; j++)
-                adder3_stage4[i][j] <= adder3_stage3[i][j*2] + adder3_stage3[i][j*2+1];
-            
-            adder3_stage5[i][2] <= adder3_stage4[i][4];
-            for (int j = 0; j < 2; j++)
-                adder3_stage5[i][j] <= adder3_stage4[i][j*2] + adder3_stage4[i][j*2+1];
-            
-            adder3_stage6[i][1] <= adder3_stage5[i][2];
-            adder3_stage6[i][0] <= adder3_stage5[i][0] + adder3_stage5[i][1];
-            
-            adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
+    // Review: Do we need a reset?
+    always_ff @(posedge i_clk) begin
+        if (i_rst) begin
+            adder1_stage1 <= '{default: 0}; 
+            adder1_stage2 <= '{default: 0}; 
+            adder1_stage3 <= '{default: 0};
+            adder1_stage4 <= '{default: 0};
+            adder1_stage5 <= '{default: 0};
+            adder1_stage6 <= '{default: 0};
+            adder1_result <= '{default: 0};
+            adder2_stage1 <= '{default: 0};
+            adder2_stage2 <= '{default: 0}; 
+            adder2_stage3 <= '{default: 0}; 
+            adder2_stage4 <= '{default: 0};
+            adder2_stage5 <= '{default: 0};
+            adder2_stage6 <= '{default: 0};
+            adder2_result <= '{default: 0};
+            adder3_stage1 <= '{default: 0};
+            adder3_stage2 <= '{default: 0}; 
+            adder3_stage3 <= '{default: 0};
+            adder3_stage4 <= '{default: 0};
+            adder3_stage5 <= '{default: 0};
+            adder3_stage6 <= '{default: 0};
+            adder3_result <= '{default: 0};
+        end else begin
+            for (int i = 0; i < NUM_FILTERS; i++) begin
+                // Adder tree structure 1
+                adder1_stage1[i] <= mult_out[i];
+                
+                adder1_stage2[i][17] <= adder1_stage1[i][14];
+                adder1_stage2[i][0:9] <= mult_out[i][0:9];
+                for (int j = 0; j < 7; j++)
+                    adder1_stage2[i][10+j] <= adder1_stage1[i][j*2] + adder1_stage1[i][j*2+1];
+                
+                for (int j = 0; j < 9; j++)
+                    adder1_stage3[i][j] <= adder1_stage2[i][j*2] + adder1_stage2[i][j*2+1];
+                
+                adder1_stage4[i][4] <= adder1_stage3[i][8];
+                for (int j = 0; j < 4; j++)
+                    adder1_stage4[i][j] <= adder1_stage3[i][j*2] + adder1_stage3[i][j*2+1];
+                
+                adder1_stage5[i][2] <= adder1_stage4[i][4];
+                for (int j = 0; j < 2; j++)
+                    adder1_stage5[i][j] <= adder1_stage4[i][j*2] + adder1_stage4[i][j*2+1];
+                
+                adder1_stage6[i][1] <= adder1_stage5[i][2];
+                adder1_stage6[i][0] <= adder1_stage5[i][0] + adder1_stage5[i][1];
+                
+                adder1_result[i] <= adder1_stage6[i][1] + adder1_stage6[i][0];
+                
+                // Adder tree structure 2
+                adder2_stage1[i] <= mult_out[i][10:14];
+                
+                adder2_stage2[i][17] <= adder2_stage1[i][4];
+                adder2_stage2[i][0:14] <= mult_out[i];
+                for (int j = 0; j < 2; j++)
+                    adder2_stage2[i][j+15] <= adder2_stage1[i][j*2] + adder2_stage1[i][j*2+1];
+                
+                for (int j = 0; j < 9; j++)
+                    adder2_stage3[i][j+5] <= adder2_stage2[i][j*2] + adder2_stage2[i][j*2+1];
+                adder2_stage3[i][0:4] <= mult_out[i][0:4];
+                
+                for (int j = 0; j < 7; j++)
+                    adder2_stage4[i][j] <= adder2_stage3[i][j*2] + adder2_stage3[i][j*2+1];
+                
+                adder2_stage5[i][3] <= adder2_stage4[i][6];
+                for (int j = 0; j < 3; j++)
+                    adder2_stage5[i][j] <= adder2_stage4[i][j*2] + adder2_stage4[i][j*2+1];
+                
+                for (int j = 0; j < 2; j++)
+                    adder2_stage6[i][j] <= adder2_stage5[i][j*2] + adder2_stage5[i][j*2+1];
+                
+                adder2_result[i] <= adder2_stage6[i][1] + adder2_stage6[i][0];
+                
+                // Adder tree structure 3
+                adder3_stage1[i][0:9] <= mult_out[i][5:14];
+                
+                for (int j = 0; j < 5; j++)
+                    adder3_stage2[i][j+15] <= adder3_stage1[i][j*2] + adder3_stage1[i][j*2+1];
+                adder3_stage2[i][0:14] <= mult_out[i];
+                
+                for (int j = 0; j < 10; j++)
+                    adder3_stage3[i][j] <= adder3_stage2[i][j*2] + adder3_stage2[i][j*2+1];
+                
+                for (int j = 0; j < 5; j++)
+                    adder3_stage4[i][j] <= adder3_stage3[i][j*2] + adder3_stage3[i][j*2+1];
+                
+                adder3_stage5[i][2] <= adder3_stage4[i][4];
+                for (int j = 0; j < 2; j++)
+                    adder3_stage5[i][j] <= adder3_stage4[i][j*2] + adder3_stage4[i][j*2+1];
+                
+                adder3_stage6[i][1] <= adder3_stage5[i][2];
+                adder3_stage6[i][0] <= adder3_stage5[i][0] + adder3_stage5[i][1];
+                
+                adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
+            end
         end
+    end
     
     // Group adder tree valid bits into vector
 //    always_comb
 //        for (int i = 0; i < 3; i++)
-//            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][6];
+//            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][7];
     
     // Set MACC Accumulate based on adder tree valid bit
 //    always_comb
@@ -800,11 +826,11 @@ module conv
 //        endcase
     
     always_comb
-        if (adder_tree_valid_sr[0][6])
+        if (adder_tree_valid_sr[0][7])
             macc_acc = adder1_result;
-        else if (adder_tree_valid_sr[1][6])
+        else if (adder_tree_valid_sr[1][7])
             macc_acc = adder2_result;
-        else if (adder_tree_valid_sr[2][6])
+        else if (adder_tree_valid_sr[2][7])
             macc_acc = adder3_result;
         else
             macc_acc = adder1_result;
@@ -871,7 +897,7 @@ module conv
         static state_t valid_states[3] = '{ONE, TWO, FOUR};
         for (int i = 0; i < 3; i++)
             adder_tree_valid_sr[i] <=
-                {adder_tree_valid_sr[i][5:0],
+                {adder_tree_valid_sr[i][6:0],
                  macc_en ? state == valid_states[i]: 1'b0};
     end
     
@@ -991,9 +1017,9 @@ module conv
         end
     
     // assign o_feature_valid = |adder_tree_valid_bits;
-    assign o_feature_valid = adder_tree_valid_sr[0][6] |
-                             adder_tree_valid_sr[1][6] |
-                             adder_tree_valid_sr[2][6];
+    assign o_feature_valid = adder_tree_valid_sr[0][7] |
+                             adder_tree_valid_sr[1][7] |
+                             adder_tree_valid_sr[2][7];
     
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
