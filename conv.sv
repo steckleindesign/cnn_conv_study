@@ -786,18 +786,28 @@ module conv
         end
     
     // Group adder tree valid bits into vector
-    always_comb
-        for (int i = 0; i < 3; i++)
-            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][6];
+//    always_comb
+//        for (int i = 0; i < 3; i++)
+//            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][6];
     
     // Set MACC Accumulate based on adder tree valid bit
+//    always_comb
+//        case(adder_tree_valid_bits)
+//            3'b100:  macc_acc = adder1_result;
+//            3'b010:  macc_acc = adder2_result;
+//            3'b001:  macc_acc = adder3_result;
+//            default: macc_acc = adder1_result;
+//        endcase
+    
     always_comb
-        case(adder_tree_valid_bits)
-            3'b100:  macc_acc = adder1_result;
-            3'b010:  macc_acc = adder2_result;
-            3'b001:  macc_acc = adder3_result;
-            default: macc_acc = adder1_result;
-        endcase
+        if (adder_tree_valid_sr[0][6])
+            macc_acc = adder1_result;
+        else if (adder_tree_valid_sr[1][6])
+            macc_acc = adder2_result;
+        else if (adder_tree_valid_sr[2][6])
+            macc_acc = adder3_result;
+        else
+            macc_acc = adder1_result;
     
     // DSP48E1 operands
     always_comb begin
@@ -980,7 +990,11 @@ module conv
             end
         end
     
-    assign o_feature_valid = |adder_tree_valid_bits;
+    // assign o_feature_valid = |adder_tree_valid_bits;
+    assign o_feature_valid = adder_tree_valid_sr[0][6] |
+                             adder_tree_valid_sr[1][6] |
+                             adder_tree_valid_sr[2][6];
+    
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
 
