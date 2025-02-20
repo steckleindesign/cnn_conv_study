@@ -566,7 +566,14 @@ module conv
     // These feature RAMs are essentially line buffers
     // (* ram_style = "distributed" *)
     logic [7:0] feature_rams [0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
-    initial feature_rams = '{default: 0};
+    // initial feature_rams = '{default: 0};
+    initial begin
+        for (int i = 0; i < FILTER_SIZE; i++) begin
+            for (int j = 0; j < INPUT_WIDTH; j++) begin
+                feature_rams[i][j] = 0;
+            end
+        end
+    end 
     
     // The actual feature window to be multiplied by the filter kernel
     logic [7:0] feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
@@ -833,7 +840,7 @@ module conv
         else if (adder_tree_valid_sr[2][7])
             macc_acc = adder3_result;
         else
-            macc_acc = adder1_result;
+            macc_acc = adder1_result; // '{default: 0};
     
     // DSP48E1 operands
     always_comb begin
@@ -974,6 +981,7 @@ module conv
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
+            take_feature       <= 0;
             fram_has_been_full <= 0;
             fram_row_ctr       <= ROW_START;
             fram_col_ctr       <= COL_START;
@@ -1017,9 +1025,10 @@ module conv
         end
     
     // assign o_feature_valid = |adder_tree_valid_bits;
-    assign o_feature_valid = adder_tree_valid_sr[0][7] |
-                             adder_tree_valid_sr[1][7] |
-                             adder_tree_valid_sr[2][7];
+    assign o_feature_valid = macc_en &
+                             (adder_tree_valid_sr[0][7] |
+                              adder_tree_valid_sr[1][7] |
+                              adder_tree_valid_sr[2][7]);
     
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
