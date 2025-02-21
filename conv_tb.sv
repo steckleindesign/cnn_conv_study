@@ -6,7 +6,7 @@
 
 module conv_tb();
 
-    localparam NUM_FEATURE_MAPS = 6;
+    // localparam NUM_FEATURE_MAPS = 6;
     
     // Inputs
     logic               clk;
@@ -16,7 +16,11 @@ module conv_tb();
     // Outputs
     logic               pull_in_feature;
     logic               valid_out;
-    logic signed [15:0] features_out[0:NUM_FEATURE_MAPS-1];
+    logic signed [15:0] features_out[0:5];
+    
+    // Debug
+    logic [10:0] conv_col;
+    logic [2:0]  state;
     
     conv DUT (.i_clk(clk),
               .i_rst(rst),
@@ -24,7 +28,10 @@ module conv_tb();
               .i_feature(feature_in),
               .o_feature_valid(valid_out),
               .o_features(features_out),
-              .o_ready_feature(pull_in_feature));
+              .o_ready_feature(pull_in_feature),
+              // Debug
+              .debug_conv_col(conv_col),
+              .debug_state(state));
     
     // Clocking
     initial begin
@@ -35,7 +42,7 @@ module conv_tb();
     // Reset
     initial begin
         rst = 1;
-        #11
+        #20
         rst = 0;
     end
     
@@ -44,7 +51,7 @@ module conv_tb();
     initial begin
         valid_in   = 0;
         feature_in = 0;
-        #30
+        #20
         valid_in   = 1;
         feature_in = 40;
         #1000

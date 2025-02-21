@@ -58,7 +58,11 @@ module conv
     input  logic         [7:0] i_feature,
     output logic               o_feature_valid,
     output logic signed [15:0] o_features[0:NUM_FILTERS-1],
-    output logic               o_ready_feature
+    output logic               o_ready_feature,
+    
+    // debug
+    output logic   [10:0] debug_conv_col,
+    output logic    [2:0] debug_state
     );
 
     // Hardcode frame dimensions in local params
@@ -567,13 +571,10 @@ module conv
     // (* ram_style = "distributed" *)
     logic [7:0] feature_rams [0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
     // initial feature_rams = '{default: 0};
-    initial begin
-        for (int i = 0; i < FILTER_SIZE; i++) begin
-            for (int j = 0; j < INPUT_WIDTH; j++) begin
+    initial
+        for (int i = 0; i < FILTER_SIZE; i++)
+            for (int j = 0; j < INPUT_WIDTH; j++)
                 feature_rams[i][j] = 0;
-            end
-        end
-    end 
     
     // The actual feature window to be multiplied by the filter kernel
     logic [7:0] feature_window [0:FILTER_SIZE-1][0:FILTER_SIZE-1];
@@ -645,7 +646,8 @@ module conv
     logic macc_ready;            // OK
     logic next_row;              // OK
     logic consume_features;      // OK
-    logic almost_done_consuming; // OK
+    logic almost_done_consuming; // Review
+    logic done_consuming;        // Review
     
     // Registers set in sequential processes
     logic take_feature;          // OK
@@ -655,9 +657,10 @@ module conv
     
     // Flags
     always_comb begin
-        // Fix
-        almost_done_consuming = fram_col_ctr == (COL_END-1);
-        next_row = conv_col_ctr == COL_END && state == FIVE;
+        // Review
+        almost_done_consuming = conv_col_ctr == (8) && state == ONE;
+        done_consuming        = conv_col_ctr == (8) && state == TWO;
+        next_row   = conv_col_ctr == COL_END && state == FIVE;
         macc_ready = fram_has_been_full;
     end
     
@@ -667,12 +670,16 @@ module conv
             consume_features <= 0;
             // done_receiving   <= 0;
         end else begin
-            if (next_row)
+            if (done_consuming)
                 consume_features <= 0;
             else if (i_feature_valid &&
-                    ((conv_col_ctr == (COL_END-10) && state == FOUR)
-                    || ~fram_has_been_full)) consume_features <= 1;
-            
+                    (
+                        (conv_col_ctr == (19) && state == THREE) ||
+                        ~fram_has_been_full
+                    ))
+            begin
+                consume_features <= 1;
+            end
             // if (conv_row_ctr == ROW_END) done_receiving <= 1;
         end
     
@@ -992,7 +999,7 @@ module conv
                 // Feature consumption control signal
                 // sent to FWFT FIFO read enable port
                 take_feature <= 1;
-                if (almost_done_consuming)
+                if (almost_done_consuming | done_consuming)
                     take_feature <= 0;
                 
                 // Feature RAM filling logic
@@ -1032,5 +1039,9 @@ module conv
     
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
+    
+    // Debug
+    assign debug_conv_col = conv_col_ctr;
+    assign debug_state    = state;
 
 endmodule
