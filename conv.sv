@@ -655,7 +655,7 @@ module conv
     
     // Flags
     always_comb begin
-        // Should work, but is there a more optimal starting point?
+        // Fix
         almost_done_consuming = fram_col_ctr == (COL_END-1);
         next_row = conv_col_ctr == COL_END && state == FIVE;
         macc_ready = fram_has_been_full;
@@ -916,6 +916,7 @@ module conv
             macc_en      <= 0;
             // conv_row_ctr <= ROW_START;
             conv_col_ctr <= COL_START;
+            feature_window <= '{default: 0};
         end else begin
             // Start MACC operations when ready
             if (macc_ready)
@@ -1025,10 +1026,9 @@ module conv
         end
     
     // assign o_feature_valid = |adder_tree_valid_bits;
-    assign o_feature_valid = macc_en &
-                             (adder_tree_valid_sr[0][7] |
-                              adder_tree_valid_sr[1][7] |
-                              adder_tree_valid_sr[2][7]);
+    assign o_feature_valid = adder_tree_valid_sr[0][7] |
+                             adder_tree_valid_sr[1][7] |
+                             adder_tree_valid_sr[2][7];
     
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
