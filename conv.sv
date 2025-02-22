@@ -63,7 +63,8 @@ module conv
     
     // debug
     output logic   [10:0] debug_conv_col,
-    output logic    [2:0] debug_state
+    output logic    [2:0] debug_state,
+    output logic          debug_macc_en
     );
 
     // Hardcode frame dimensions in local params
@@ -77,9 +78,9 @@ module conv
     localparam        INPUT_WIDTH      = 31;
     localparam        INPUT_HEIGHT     = 31;
     localparam        ROW_START        = 2;
-    localparam        ROW_END          = 29;
+    localparam        ROW_END          = 28;
     localparam        COL_START        = 2;
-    localparam        COL_END          = 29;
+    localparam        COL_END          = 28;
     
     // Weight ROMs
     // 90 distributed RAMs -> 1 per DSP48E1
@@ -660,8 +661,8 @@ module conv
     // Flags
     always_comb begin
         // Review
-        almost_done_consuming = conv_col_ctr == (8) && state == ONE;
-        done_consuming        = conv_col_ctr == (8) && state == TWO;
+        almost_done_consuming = conv_col_ctr == (9) && state == THREE;
+        done_consuming        = conv_col_ctr == (9) && state == FOUR;
         next_row   = conv_col_ctr == COL_END && state == FIVE;
         macc_ready = fram_has_been_full;
     end
@@ -677,7 +678,7 @@ module conv
                 consume_features <= 0;
             else if (i_feature_valid &&
                     (
-                        (conv_col_ctr == (19) && state == THREE) ||
+                        (conv_col_ctr == (19) && state == FIVE) ||
                         ~fram_has_been_full
                     ))
             begin
@@ -736,8 +737,8 @@ module conv
     // Review: Do we need a reset?
     always_ff @(posedge i_clk) begin
         if (i_rst) begin
-            adder1_stage1 <= '{default: 0}; 
-            adder1_stage2 <= '{default: 0}; 
+            adder1_stage1 <= '{default: 0};
+            adder1_stage2 <= '{default: 0};
             adder1_stage3 <= '{default: 0};
             adder1_stage4 <= '{default: 0};
             adder1_stage5 <= '{default: 0};
@@ -745,13 +746,13 @@ module conv
             adder1_result <= '{default: 0};
             adder2_stage1 <= '{default: 0};
             adder2_stage2 <= '{default: 0}; 
-            adder2_stage3 <= '{default: 0}; 
+            adder2_stage3 <= '{default: 0};
             adder2_stage4 <= '{default: 0};
             adder2_stage5 <= '{default: 0};
             adder2_stage6 <= '{default: 0};
             adder2_result <= '{default: 0};
             adder3_stage1 <= '{default: 0};
-            adder3_stage2 <= '{default: 0}; 
+            adder3_stage2 <= '{default: 0};
             adder3_stage3 <= '{default: 0};
             adder3_stage4 <= '{default: 0};
             adder3_stage5 <= '{default: 0};
@@ -913,9 +914,9 @@ module conv
     always_ff @(posedge i_clk)
     begin
         if (i_rst) begin
-            macc_en      <= 0;
-            // conv_row_ctr <= ROW_START;
-            conv_col_ctr <= COL_START;
+            macc_en        <= 0;
+            // conv_row_ctr   <= ROW_START;
+            conv_col_ctr   <= COL_START;
             feature_window <= '{default: 0};
         end else begin
             // Start MACC operations when ready
@@ -1032,10 +1033,11 @@ module conv
     
     assign o_features      = macc_acc;
     assign o_ready_feature = take_feature;
+    assign o_last_feature  = last_conv_loc;
     
     // Debug
     assign debug_conv_col = conv_col_ctr;
     assign debug_state    = state;
-    assign o_last_feature = last_conv_loc;
+    assign debug_macc_en  = macc_en;
 
 endmodule
