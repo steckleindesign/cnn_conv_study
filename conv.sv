@@ -59,6 +59,7 @@ module conv
     output logic               o_feature_valid,
     output logic signed [15:0] o_features[0:NUM_FILTERS-1],
     output logic               o_ready_feature,
+    output logic               o_last_feature,
     
     // debug
     output logic   [10:0] debug_conv_col,
@@ -603,7 +604,7 @@ module conv
     logic [$clog2(COL_END)-1:0]     fram_col_ctr;
     
     // Convolution Feature location
-    // logic [$clog2(ROW_END)-1:0] conv_row_ctr; // unused
+    logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
     // Convolution FSM, controls DSP48E1 time multiplexing,
@@ -653,7 +654,8 @@ module conv
     logic take_feature;          // OK
     logic process_feature;       // OK
     logic fram_has_been_full;    // OK
-    // logic done_receiving;        // unused
+    logic done_receiving;        // unused
+    logic last_conv_loc;
     
     // Flags
     always_comb begin
@@ -668,7 +670,8 @@ module conv
     always_ff @(posedge i_clk)
         if (i_rst) begin
             consume_features <= 0;
-            // done_receiving   <= 0;
+            done_receiving   <= 0;
+            last_conv_loc    <= 0;
         end else begin
             if (done_consuming)
                 consume_features <= 0;
@@ -680,7 +683,11 @@ module conv
             begin
                 consume_features <= 1;
             end
-            // if (conv_row_ctr == ROW_END) done_receiving <= 1;
+            if (conv_row_ctr == ROW_END) begin
+                done_receiving <= 1;
+                if (conv_col_ctr == COL_END)
+                    last_conv_loc <= 1;
+            end
         end
     
     always_ff @(posedge i_clk)
@@ -825,20 +832,6 @@ module conv
         end
     end
     
-    // Group adder tree valid bits into vector
-//    always_comb
-//        for (int i = 0; i < 3; i++)
-//            adder_tree_valid_bits[i] = adder_tree_valid_sr[i][7];
-    
-    // Set MACC Accumulate based on adder tree valid bit
-//    always_comb
-//        case(adder_tree_valid_bits)
-//            3'b100:  macc_acc = adder1_result;
-//            3'b010:  macc_acc = adder2_result;
-//            3'b001:  macc_acc = adder3_result;
-//            default: macc_acc = adder1_result;
-//        endcase
-    
     always_comb
         if (adder_tree_valid_sr[0][7])
             macc_acc = adder1_result;
@@ -943,7 +936,7 @@ module conv
             // Update convolution row count
             // Reset column count to column 2
             if (next_row) begin
-                // conv_row_ctr <= conv_row_ctr + 1;
+                conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
             end
             
@@ -1043,5 +1036,6 @@ module conv
     // Debug
     assign debug_conv_col = conv_col_ctr;
     assign debug_state    = state;
+    assign o_last_feature = last_conv_loc;
 
 endmodule

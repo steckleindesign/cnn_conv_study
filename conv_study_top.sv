@@ -33,6 +33,7 @@ module conv_study_top (
     
     logic               output_features_valid;
     logic signed [15:0] output_features[NUM_CONV_FILTERS];
+    logic               last_feature;
         
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),
@@ -47,16 +48,17 @@ module conv_study_top (
                     .i_feature(conv1_feature_in),
                     .o_feature_valid(output_features_valid),
                     .o_features(output_features),
-                    .o_ready_feature(receive_feature));
+                    .o_ready_feature(receive_feature),
+                    .o_last_feature(last_feature));
     
     post_processing post_processing_inst (.clk(clk),
                                           .features_valid(output_features_valid),
                                           .features_in(output_features),
                                           .feature_out(feature_out));
     
-    assign led = 2'b11;
-    assign led_r = 1;
-    assign led_g = 0;
-    assign led_b = 0;
+    assign led   = {rst, last_feature};
+    assign led_r = rst;
+    assign led_g = last_feature;
+    assign led_b = ~last_feature;
 
 endmodule
