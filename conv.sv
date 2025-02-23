@@ -591,14 +591,14 @@ module conv
     logic signed [15:0] fram_swap_regs[0:NUM_FILTERS-2];
     
     // Signals holding the DSP48E1 operands, used for readability
-    logic         [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
-    logic signed [15:0] weight_operands[0:NUM_FILTERS-1]
-                                       [0:FILTER_SIZE-1]
-                                       [0:OFFSET_GRP_SZ-1];
+    (* no_dsp = "true" *) logic [7:0]
+    feature_operands[0:FILTER_SIZE-1][0:2];
+    (* no_dsp = "true" *) logic signed [15:0]
+    weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     
     // All 90 DSP48E1 outputs
-    logic signed [15:0] mult_out[0:NUM_FILTERS-1]
-                                [0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [15:0]
+    mult_out[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
     
     // Feature RAM location
     logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
@@ -616,23 +616,30 @@ module conv
     state_t state, next_state;
     
     // Adder Tree
-    logic         [7:0] adder_tree_valid_sr[0:2];
-    logic         [2:0] adder_tree_valid_bits;
+    logic [7:0] adder_tree_valid_sr[0:2];
+    logic [2:0] adder_tree_valid_bits;
+    (* no_dsp = "true" *)
     logic signed [15:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
+    (* no_dsp = "true" *)
     logic signed [15:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
     logic signed [15:0] adder1_stage3[0:NUM_FILTERS-1][0:8];  // 9 adder outs from stage 2
     logic signed [15:0] adder1_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
     logic signed [15:0] adder1_stage5[0:NUM_FILTERS-1][0:2];  // 3 adder outs from stage 4
     logic signed [15:0] adder1_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
     logic signed [15:0] adder1_result[0:NUM_FILTERS-1];       // adder tree 1 result
+    (* no_dsp = "true" *)
     logic signed [15:0] adder2_stage1[0:NUM_FILTERS-1][0:4];  // 5 dsp outs
+    (* no_dsp = "true" *)
     logic signed [15:0] adder2_stage2[0:NUM_FILTERS-1][0:17]; // 3 adder outs from stage 1 + 15 dsp outs
+    (* no_dsp = "true" *)
     logic signed [15:0] adder2_stage3[0:NUM_FILTERS-1][0:13]; // 9 adder outs from stage 2 + 5 dsp outs
     logic signed [15:0] adder2_stage4[0:NUM_FILTERS-1][0:6];  // 7 adder outs from stage 3
     logic signed [15:0] adder2_stage5[0:NUM_FILTERS-1][0:3];  // 4 adder outs from stage 4
     logic signed [15:0] adder2_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
     logic signed [15:0] adder2_result[0:NUM_FILTERS-1];       // adder tree 2 result
+    (* no_dsp = "true" *)
     logic signed [15:0] adder3_stage1[0:NUM_FILTERS-1][0:9];  // 10 dsp outs
+    (* no_dsp = "true" *)
     logic signed [15:0] adder3_stage2[0:NUM_FILTERS-1][0:19]; // 5 adder outs from stage 1 + 15 dsp outs
     logic signed [15:0] adder3_stage3[0:NUM_FILTERS-1][0:9];  // 10 adder outs from stage 2
     logic signed [15:0] adder3_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
@@ -892,12 +899,12 @@ module conv
                         = weights[i][j][k][offsets[k]];
     endtask
     
-    always_ff @(posedge i_clk)
+    always_comb
         for (int i = 0; i < NUM_FILTERS; i++)
             for (int j = 0; j < FILTER_SIZE; j++)
                 for (int k = 0; k < OFFSET_GRP_SZ; k++)
                     mult_out[i][k*5+j]
-                        <= weight_operands[i][j][k]
+                        = weight_operands[i][j][k]
                             * $signed(feature_operands[j][k]);
     
     // Shift adder tree valid signal shift register
