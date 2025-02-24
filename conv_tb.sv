@@ -17,10 +17,12 @@ module conv_tb();
     logic               pull_in_feature;
     logic               valid_out;
     logic signed [15:0] features_out[0:5];
+    logic               last_feature;
     
     // Debug
     logic [10:0] conv_col;
-    logic [2:0]  state;
+    logic  [2:0] state;
+    logic        macc_en;
     
     conv DUT (.i_clk(clk),
               .i_rst(rst),
@@ -29,9 +31,11 @@ module conv_tb();
               .o_feature_valid(valid_out),
               .o_features(features_out),
               .o_ready_feature(pull_in_feature),
+              .o_last_feature(last_feature),
               // Debug
               .debug_conv_col(conv_col),
-              .debug_state(state));
+              .debug_state(state),
+              .debug_macc_en(macc_en));
     
     // Clocking
     initial begin
