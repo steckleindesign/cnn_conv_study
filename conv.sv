@@ -63,6 +63,7 @@ module conv
     
     // debug
     output logic   [10:0] debug_conv_col,
+    output logic   [10:0] debug_conv_row,
     output logic    [2:0] debug_state,
     output logic          debug_macc_en
     );
@@ -936,7 +937,7 @@ module conv
     begin
         if (i_rst) begin
             macc_en        <= 0;
-            // conv_row_ctr   <= ROW_START;
+            conv_row_ctr   <= ROW_START;
             conv_col_ctr   <= COL_START;
             feature_window <= '{default: 0};
         end else begin
@@ -1058,6 +1059,7 @@ module conv
     
     // Debug
     assign debug_conv_col = conv_col_ctr;
+    assign debug_conv_row = conv_row_ctr;
     assign debug_state    = state;
     assign debug_macc_en  = macc_en;
 

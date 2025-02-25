@@ -7,6 +7,7 @@
 module conv_tb();
 
     // localparam NUM_FEATURE_MAPS = 6;
+    integer seed;
     
     // Inputs
     logic               clk;
@@ -21,6 +22,7 @@ module conv_tb();
     
     // Debug
     logic [10:0] conv_col;
+    logic [10:0] conv_row;
     logic  [2:0] state;
     logic        macc_en;
     
@@ -34,6 +36,7 @@ module conv_tb();
               .o_last_feature(last_feature),
               // Debug
               .debug_conv_col(conv_col),
+              .debug_conv_row(conv_row),
               .debug_state(state),
               .debug_macc_en(macc_en));
     
@@ -60,6 +63,14 @@ module conv_tb();
         feature_in = 40;
         #1000
         feature_in = 41;
+    end
+    
+    initial begin
+        seed = 1234;
+        forever begin
+            @(posedge clk);
+            feature_in = $random(seed) & 8'hFF;
+        end
     end
 
 endmodule
