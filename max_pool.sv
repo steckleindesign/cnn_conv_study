@@ -12,7 +12,8 @@ module max_pool #(
     input  logic                         i_clk,
     input  logic                         i_start,
     input  logic signed [DATA_WIDTH-1:0] i_features,
-    output logic signed [DATA_WIDTH-1:0] o_features
+    output logic signed [DATA_WIDTH-1:0] o_features,
+    output logic                         o_nd
 );
     
     logic [DATA_WIDTH-1:0] feature_buf[0:NUM_COLUMNS-1];
@@ -20,9 +21,11 @@ module max_pool #(
     logic [$clog2(NUM_OUT_ROWS)-1:0] row_cnt;
     logic is_bottom_row;
     logic processing;
+    logic nd_out;
     
     always_ff @(posedge i_clk)
     begin
+        nd_out <= 0;
         if (~processing)
         begin
             col_cnt       <= 'b0;
@@ -35,44 +38,27 @@ module max_pool #(
         begin
             if (is_bottom_row)
             begin
+                // [ -  - ]
+                // [ x  x ]
+                if (i_features > feature_buf[{col_cnt[$clog2(NUM_COLUMNS)-1:1], 1'b0}])
+                    feature_buf[col_cnt-1] <= i_features;
                 if (col_cnt[0])
-                begin
-                    //    [ -  - ]
-                    //    [ -  x ]
-                    if (i_features > feature_buf[col_cnt-1])
-                        feature_buf[col_cnt-1] <= i_features;
-                end
-                else
-                begin
-                    //    [ -  - ]
-                    //    [ x  - ]
-                    if (i_features > feature_buf[col_cnt])
-                        feature_buf[col_cnt] <= i_features;
-                end
+                    nd_out <= 1;
             end
             else
-            begin
-                if (col_cnt[0])
-                begin
-                    //    [ -  x ]
-                    //    [ -  - ]
-                    feature_buf[col_cnt] <= i_features;
-                end
-                else
-                begin
-                    //    [ x  - ]
-                    //    [ -  - ]
-                    feature_buf[col_cnt] <= i_features;
-                end
-            end
-            col_cnt <= col_cnt + 1'b1;
+                // [ x  x ]
+                // [ -  - ]
+                feature_buf[col_cnt] <= i_features;
+            col_cnt <= col_cnt + 1;
             if (col_cnt == NUM_COLUMNS-1)
             begin
                 col_cnt <= 'b0;
-                row_cnt <= row_cnt + 1'b1;
+                row_cnt <= row_cnt + 1;
             end
             o_features <= feature_buf[col_cnt-1];
         end
     end
+    
+    assign o_nd = nd_out;
     
 endmodule
