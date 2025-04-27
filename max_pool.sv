@@ -11,8 +11,8 @@ module max_pool #(
 )(
     input  logic                         i_clk,
     input  logic                         i_start,
-    input  logic signed [DATA_WIDTH-1:0] i_features,
-    output logic signed [DATA_WIDTH-1:0] o_features,
+    input  logic signed [DATA_WIDTH-1:0] i_features[0:NUM_CHANNELS-1],
+    output logic signed [DATA_WIDTH-1:0] o_features[0:NUM_CHANNELS-1],
     output logic                         o_nd
 );
     

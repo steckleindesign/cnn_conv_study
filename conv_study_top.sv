@@ -34,6 +34,9 @@ module conv_study_top (
     logic               output_features_valid;
     logic signed [15:0] output_features[NUM_CONV_FILTERS];
     logic               last_feature;
+    
+    logic               max_pool_feature_valid;
+    logic signed [15:0] max_pool_features_out;
         
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),
@@ -51,14 +54,24 @@ module conv_study_top (
                     .o_ready_feature(receive_feature),
                     .o_last_feature(last_feature));
     
+    max_pool #(.DATA_WIDTH(16),
+               .NUM_CHANNELS(6),
+               .NUM_COLUMNS(28),
+               .NUM_OUT_ROWS(14))
+              max_pool_inst (.i_clk(clk),
+                             .i_start(output_features_valid),
+                             .i_features(output_features),
+                             .o_features(max_pool_features_out),
+                             .o_nd(max_pool_feature_valid));
+    
     post_processing post_processing_inst (.clk(clk),
-                                          .features_valid(output_features_valid),
-                                          .features_in(output_features),
+                                          .features_valid(max_pool_feature_valid),
+                                          .features_in(max_pool_features_out),
                                           .feature_out(feature_out));
     
     assign led   = {rst, last_feature};
-    assign led_r = rst;
-    assign led_g = last_feature;
+    assign led_r =  rst;
+    assign led_g =       last_feature;
     assign led_b = ~last_feature;
 
 endmodule
