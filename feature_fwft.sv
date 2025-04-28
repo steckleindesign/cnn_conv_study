@@ -4,19 +4,19 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module feature_fwft(
-    input        clk,
-    input        rst,
-    input        rd_en,
-    input  [7:0] in_feature,
-    output       feature_valid,
-    output [7:0] out_feature
+    input  logic       clk,
+    input  logic       rst,
+    input  logic       rd_en,
+    input  logic [7:0] in_feature,
+    output logic       feature_valid,
+    output logic [7:0] out_feature
 );
 
     localparam FIFO_WIDTH = 8;
     localparam FIFO_DEPTH = 27*27;
     localparam FIFO_ADDRW = $clog2(FIFO_DEPTH);
     
-    logic [FIFO_WIDTH-1:0] fifo_data [0:FIFO_DEPTH-1];
+    logic [FIFO_WIDTH-1:0] fifo_data[0:FIFO_DEPTH-1];
     logic [FIFO_ADDRW-1:0] fifo_rd_addr;
     logic [FIFO_ADDRW-1:0] fifo_wr_addr;
     logic                  valid;

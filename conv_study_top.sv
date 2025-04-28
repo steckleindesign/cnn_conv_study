@@ -16,13 +16,13 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv_study_top (
-    input                clk,
-    input                rst,
-    input          [7:0] feature_in,
-    output signed [15:0] feature_out,
+    input  logic               clk,
+    input  logic               rst,
+    input  logic         [7:0] feature_in,
+    output logic signed [15:0] feature_out,
     // LEDs for dev board
-    output         [1:0] led,
-    output               led_r, led_g, led_b
+    output logic         [1:0] led,
+    output logic               led_r, led_g, led_b
 );
 
     localparam NUM_CONV_FILTERS = 6;
@@ -36,7 +36,7 @@ module conv_study_top (
     logic               last_feature;
     
     logic               max_pool_feature_valid;
-    logic signed [15:0] max_pool_features_out;
+    logic signed [15:0] max_pool_features_out[NUM_CONV_FILTERS];
         
     feature_fwft feature_fwft_inst (.clk(clk),
                                     .rst(rst),

@@ -48,10 +48,9 @@
     
     // Study the performance hit when using a fixed addition/subtraction on memory addressing
 
-module conv
-    #(
+module conv #(
     localparam NUM_FILTERS = 6
-    )(
+)(
     input  logic               i_clk,
     input  logic               i_rst,
     input  logic               i_feature_valid,
@@ -66,7 +65,7 @@ module conv
     output logic   [10:0] debug_conv_row,
     output logic    [2:0] debug_state,
     output logic          debug_macc_en
-    );
+);
 
     // Hardcode frame dimensions in local params
     localparam string WEIGHTS_FILE     = "weights.mem";

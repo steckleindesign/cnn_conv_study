@@ -16,8 +16,8 @@ module max_pool #(
     output logic                         o_nd
 );
     
-    logic [DATA_WIDTH-1:0] feature_buf[0:NUM_COLUMNS-1];
-    logic [$clog2(NUM_COLUMNS)-1:0] col_cnt;
+    logic [DATA_WIDTH-1:0] feature_buf[0:NUM_CHANNELS-1][0:NUM_COLUMNS-1];
+    logic [$clog2(NUM_COLUMNS )-1:0] col_cnt;
     logic [$clog2(NUM_OUT_ROWS)-1:0] row_cnt;
     logic is_bottom_row;
     logic processing;
@@ -40,22 +40,25 @@ module max_pool #(
             begin
                 // [ -  - ]
                 // [ x  x ]
-                if (i_features > feature_buf[{col_cnt[$clog2(NUM_COLUMNS)-1:1], 1'b0}])
-                    feature_buf[col_cnt-1] <= i_features;
+                for (int i = 0; i < NUM_CHANNELS; i++)
+                    if (i_features[i] > feature_buf[i][{col_cnt[$clog2(NUM_COLUMNS)-1:1], 1'b0}])
+                        feature_buf[i][col_cnt-1] <= i_features[i];
                 if (col_cnt[0])
                     nd_out <= 1;
             end
             else
                 // [ x  x ]
                 // [ -  - ]
-                feature_buf[col_cnt] <= i_features;
+                for (int i = 0; i < NUM_CHANNELS; i++)
+                    feature_buf[i][col_cnt] <= i_features[i];
             col_cnt <= col_cnt + 1;
             if (col_cnt == NUM_COLUMNS-1)
             begin
                 col_cnt <= 'b0;
                 row_cnt <= row_cnt + 1;
             end
-            o_features <= feature_buf[col_cnt-1];
+            for (int i = 0; i < NUM_CHANNELS; i++)
+                o_features[i] <= feature_buf[i][col_cnt-1];
         end
     end
     
