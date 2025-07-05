@@ -1,67 +1,64 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 
+// Conv1 data coming in parallel between 6 C1 maps and serially per map
+
 //////////////////////////////////////////////////////////////////////////////////
 
-module max_pool #(
-    parameter DATA_WIDTH   = 16,
-    parameter NUM_CHANNELS = 6,
-    parameter NUM_COLUMNS  = 28,
-    parameter NUM_OUT_ROWS = 14
-)(
-    input  logic                         i_clk,
-    input  logic                         i_start,
-    input  logic signed [DATA_WIDTH-1:0] i_features[0:NUM_CHANNELS-1],
-    output logic signed [DATA_WIDTH-1:0] o_features[0:NUM_CHANNELS-1],
-    output logic                         o_nd
+module max_pool (
+    input  logic              i_clk,
+    input  logic              i_rst,
+    input  logic              i_feature_valid,
+    input  logic signed [7:0] i_features[0:5],
+    output logic              o_feature_valid,
+    output logic signed [7:0] o_features[0:5]
 );
     
-    logic [DATA_WIDTH-1:0] feature_buf[0:NUM_CHANNELS-1][0:NUM_COLUMNS-1];
-    logic [$clog2(NUM_COLUMNS )-1:0] col_cnt;
-    logic [$clog2(NUM_OUT_ROWS)-1:0] row_cnt;
-    logic is_bottom_row;
-    logic processing;
-    logic nd_out;
+    logic [$clog2(14)-1:0] col_cnt = 0;
+    logic [$clog2(14)-1:0] row_cnt = 0;
     
-    always_ff @(posedge i_clk)
-    begin
-        nd_out <= 0;
-        if (~processing)
-        begin
-            col_cnt       <= 'b0;
-            row_cnt       <= 'b0;
-            is_bottom_row <= 0;
-            if (i_start)
-                processing <= 1;
-        end
-        else
-        begin
-            if (is_bottom_row)
-            begin
-                // [ -  - ]
-                // [ x  x ]
-                for (int i = 0; i < NUM_CHANNELS; i++)
-                    if (i_features[i] > feature_buf[i][{col_cnt[$clog2(NUM_COLUMNS)-1:1], 1'b0}])
-                        feature_buf[i][col_cnt-1] <= i_features[i];
-                if (col_cnt[0])
-                    nd_out <= 1;
+    logic signed [7:0] feature_sr[0:5][0:13];
+    
+    logic signed [7:0] reg_0_0[0:5];
+    logic signed [7:0] reg_0_1[0:5];
+    logic signed [7:0] reg_0_c[0:5];
+    logic signed [7:0] reg_1_0[0:5];
+    logic signed [7:0] reg_1_1[0:5];
+    logic signed [7:0] reg_1_c[0:5];
+    
+    always_ff @(posedge i_clk) begin
+        if (i_rst) begin
+            col_cnt <= 0;
+            row_cnt <= 0;
+        end else begin
+            if (i_feature_valid) begin
+                for (int i = 0; i < 6; i++) begin
+                    // Conditional data flow - implemented as logic on D input or as CE?
+                    if (col_cnt[0]) begin
+                        feature_sr[i] <= {feature_sr[i][0:12], reg_0_c[i]};
+                        reg_1_1[i] <= reg_1_c[i];
+                    end else if (~col_cnt[0]) begin
+                        reg_1_1[i] <= feature_sr[i][13];
+                    end
+                    // Continuous Data flow
+                    reg_0_0[i] <= i_features[i];
+                    reg_0_1[i] <= reg_0_0[i];
+                    reg_0_c[i] <= (reg_0_1[i] > reg_0_0[i]) ? reg_0_1[i] : reg_0_0[i];
+                    reg_1_0[i] <= i_features[i];
+                    reg_1_c[i] <= (reg_1_1[i] > reg_1_0[i]) ? reg_1_1[i] : reg_1_0[i];
+                end
+                // Counters for control logic
+                col_cnt <= col_cnt + 1;
+                if (col_cnt == 13) begin
+                    col_cnt <= 0;
+                    row_cnt <= row_cnt + 1;
+                end
+                // Feature valid control logic
+                o_feature_valid <= row_cnt[0] & col_cnt[0];
+                // Send out registered feature
+                o_features      <= reg_1_c;
             end
-            else
-                // [ x  x ]
-                // [ -  - ]
-                for (int i = 0; i < NUM_CHANNELS; i++)
-                    feature_buf[i][col_cnt] <= i_features[i];
-            col_cnt <= col_cnt + 1;
-            if (col_cnt == NUM_COLUMNS-1)
-            begin
-                col_cnt <= 'b0;
-                row_cnt <= row_cnt + 1;
-            end
-            for (int i = 0; i < NUM_CHANNELS; i++)
-                o_features[i] <= feature_buf[i][col_cnt-1];
         end
     end
-    
-    assign o_nd = nd_out;
-    
+
 endmodule

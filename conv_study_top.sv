@@ -2,76 +2,100 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 /*
-    Study:
-        Study bit lopping
-        
-    TODO:
-        MMCM PLL
-        Testbenches
-        - conv
-        - post_processing
-        
+TODO:
+    Place registers in IOB
+    
+    Pipeline design, focus on DSP registers
+    
+    change parallel IO to serial IO over SPI interface
+    
+    overclock DSP48E1, try different clocking techniques
+        ([1x, 2x CLKOUT0/CLKOUT1],
+        [1x, 2x CLKOUT0 w/ BUFGDIV],
+        [1x w/ dual edge triggering],
+        [2x w/ MCPs])
+    
+    Testbenches for conv, pool, post_processing
+    
+    
+    
+
+    Takes 27*3=81 clock cycles for FRAM to become full
+    MACC enable set after 27*2=54 clock cycles
+    For logic simplicity, FRAM should become full before MACC is enabled
+    
+    For distributed RAM should we aim for sync or async reads?
+    
+    Study the performance hit when using a fixed addition/subtraction on memory addressing
 */
 
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv_study_top (
-    input  logic               clk,
-    input  logic               rst,
-    input  logic         [7:0] feature_in,
-    output logic signed [15:0] feature_out,
+    input  logic              top_i_clk,
+    input  logic              top_i_rst,
+    input  logic        [7:0] top_i_feature_in,
+    output logic signed [7:0] top_o_feature_out,
     // LEDs for dev board
-    output logic         [1:0] led,
-    output logic               led_r, led_g, led_b
+    output logic        [1:0] top_o_led,
+    output logic              top_o_led_r, top_o_led_g, top_o_led_b
 );
 
     localparam NUM_CONV_FILTERS = 6;
+    
+    // MMCM
+    logic clk50m;
+    logic locked;
+    
+    logic              conv_feature_in_valid;
+    logic signed [7:0] conv_feature_in;
+    
+    logic              conv_last_feature;
+    logic              conv_receive_feature;
+    
+    logic              pool_features_in_valid;
+    logic signed [7:0] pool_features_in[0:5];
+    
+    logic              pool_features_out_valid;
+    logic signed [7:0] pool_features_out[0:5];
+    
 
-    logic               conv1_feat_in_valid;
-    logic         [7:0] conv1_feature_in;
-    logic               receive_feature;
+    sys_mmcm_12m_to_50m sys_mmcm_inst (.clk(top_i_clk),
+                                       .reset(top_i_rst),
+                                       .clk50m(clk50m),
+                                       .locked(locked));
     
-    logic               output_features_valid;
-    logic signed [15:0] output_features[NUM_CONV_FILTERS];
-    logic               last_feature;
-    
-    logic               max_pool_feature_valid;
-    logic signed [15:0] max_pool_features_out[NUM_CONV_FILTERS];
-        
-    feature_fwft feature_fwft_inst (.clk(clk),
-                                    .rst(rst),
-                                    .in_feature(feature_in),
-                                    .rd_en(receive_feature),
-                                    .feature_valid(conv1_feat_in_valid),
-                                    .out_feature(conv1_feature_in));
+    feature_fwft feature_fwft_inst (.i_clk(clk50m),
+                                    .i_rst(top_i_rst),
+                                    .i_in_feature(top_i_feature_in),
+                                    .i_rd_en(conv_receive_feature),
+                                    .o_feature_valid(conv_feature_in_valid),
+                                    .o_out_feature(conv_feature_in));
 
-    conv conv_inst (.i_clk(clk),
-                    .i_rst(rst),
-                    .i_feature_valid(conv1_feat_in_valid),
-                    .i_feature(conv1_feature_in),
-                    .o_feature_valid(output_features_valid),
-                    .o_features(output_features),
-                    .o_ready_feature(receive_feature),
-                    .o_last_feature(last_feature));
+    conv conv_inst (.i_clk(clk50m),
+                    .i_rst(top_i_rst),
+                    .i_feature_valid(conv_feature_in_valid),
+                    .i_feature(conv_feature_in),
+                    .o_ready_feature(conv_receive_feature),
+                    .o_last_feature(conv_last_feature),
+                    .o_feature_valid(pool_features_in_valid),
+                    .o_features(pool_features_in));
     
-    max_pool #(.DATA_WIDTH(16),
-               .NUM_CHANNELS(6),
-               .NUM_COLUMNS(28),
-               .NUM_OUT_ROWS(14))
-              max_pool_inst (.i_clk(clk),
-                             .i_start(output_features_valid),
-                             .i_features(output_features),
-                             .o_features(max_pool_features_out),
-                             .o_nd(max_pool_feature_valid));
+    max_pool max_pool_inst (.i_clk(clk50m),
+                            .i_rst(top_i_rst),
+                            .i_feature_valid(pool_features_in_valid),
+                            .i_features(pool_features_in),
+                            .o_feature_valid(pool_features_out_valid),
+                            .o_features(pool_features_out));
     
-    post_processing post_processing_inst (.clk(clk),
-                                          .features_valid(max_pool_feature_valid),
-                                          .features_in(max_pool_features_out),
-                                          .feature_out(feature_out));
+    post_processing post_processing_inst (.i_clk(clk50m),
+                                          .i_features_valid(pool_features_out_valid),
+                                          .i_features_in(pool_features_out),
+                                          .o_feature_out(top_o_feature_out));
     
-    assign led   = {rst, last_feature};
-    assign led_r =  rst;
-    assign led_g =       last_feature;
-    assign led_b = ~last_feature;
+    assign top_o_led   = {1'b0, 1'b0};
+    assign top_o_led_r = 0;
+    assign top_o_led_g = 1;
+    assign top_o_led_b = 0;
 
 endmodule
