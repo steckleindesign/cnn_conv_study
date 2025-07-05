@@ -21,10 +21,13 @@ module feature_fwft(
     logic [FIFO_ADDRW-1:0] fifo_wr_addr;
     logic                  valid;
     
+    logic signed [7:0] d_in_feature;
+    always_ff @(posedge i_clk)
+        d_in_feature <= i_in_feature;
+    
     always_ff @(posedge i_clk)
     begin
         if (i_rst) begin
-            fifo_data    <= '{default: 0};
             fifo_rd_addr <= 'b0;
             fifo_wr_addr <= 'b0;
             valid        <= 0;
@@ -32,7 +35,7 @@ module feature_fwft(
             // TODO: Need more useful valid signal
             valid <= 1;
             if (fifo_wr_addr < FIFO_DEPTH) begin
-                fifo_data[fifo_wr_addr] <= i_in_feature;
+                fifo_data[fifo_wr_addr] <= d_in_feature;
                 fifo_wr_addr <= fifo_wr_addr + 1;
             end
             if (fifo_wr_addr > 0 && i_rd_en) begin
@@ -41,9 +44,10 @@ module feature_fwft(
         end
     end
     
-    assign o_feature_valid = valid;
-    // Should this be registered or is it ok
-    // since we process the data in conv in a sequential process
-    assign o_out_feature   = fifo_data[fifo_rd_addr];
+    // register output, 
+    always_ff @(posedge i_clk) begin
+        o_feature_valid <= valid;
+        o_out_feature   <= fifo_data[fifo_rd_addr];
+    end
 
 endmodule

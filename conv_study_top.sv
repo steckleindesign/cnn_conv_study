@@ -3,9 +3,11 @@
 
 /*
 TODO:
-    Place registers in IOB
+    Verify control logic
     
-    Pipeline design, focus on DSP registers
+    Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
+
+    Place registers in IOB
     
     change parallel IO to serial IO over SPI interface
     
@@ -17,9 +19,6 @@ TODO:
     
     Testbenches for conv, pool, post_processing
     
-    
-    
-
     Takes 27*3=81 clock cycles for FRAM to become full
     MACC enable set after 27*2=54 clock cycles
     For logic simplicity, FRAM should become full before MACC is enabled
@@ -34,7 +33,9 @@ TODO:
 module conv_study_top (
     input  logic              top_i_clk,
     input  logic              top_i_rst,
-    input  logic        [7:0] top_i_feature_in,
+    (* IOB = "TRUE" *)
+    input  logic signed [7:0] top_i_feature_in,
+    (* IOB = "TRUE" *)
     output logic signed [7:0] top_o_feature_out,
     // LEDs for dev board
     output logic        [1:0] top_o_led,
