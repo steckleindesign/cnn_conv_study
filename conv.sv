@@ -18,18 +18,62 @@
     
     TODO: Get outputs of DSP48s to carry chain resources efficiently
           Should we implement some of the adder tree in the DSPs?
+    
+    
+    
+    
+    Verify control logic
+    
+    Logic mapping
+    - feature_rams, feature_window, next_initial_feature_window, fram_swap_regs
+    Registering vs combinatorial naming of
+    - feature_operands/weight_operands
+    
+    
+    feature_window is 5x5
+    feature_window is the data which feeds feature_operands,
+    feature_window gets set with next_initial_feature_window,
+        and then feature_rams_data is shifted into the
+        right-most column throughout the feature row
+    
+    next_initial_feature_window is 5x5
+    next_initial_feature_window is set with input features at the start,
+        then throughout the convolutions gets shifted down, input features
+        are shifted into the bottom row of next_initial_feature_window
+    
+    feature_rams is 32x5
+    feature_rams first two and last two columns are zero-padded so non-zero
+        data dimensions is 28x5, first two and last two feature map rows are zeros
+    feature_rams is the data which feeds feature_window by shifting in data in each 5 rows
+    feature_rams data is written directly by input features
+    feature_rams data is shifted down via swap register logic
+    Read/Write logic currently
+        - Read for 3 out of 5 states by feature_window
+        - Read for 28/46 cycles by swap registers
+        - Write for 28/46 cycles by swap registers
+        - Write for 28/46 cycles by input feature
+    
+    
+    
+    fram_swap_regs may have a bug, its controlled by num filters instead of filter size
+    next_initial_feature_window has bugs
+    
+    Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
+
 */
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv (
     input  logic              i_clk,
     input  logic              i_rst,
+    
     input  logic              i_feature_valid,
     input  logic        [7:0] i_feature,
+    
     output logic              o_feature_valid,
     output logic signed [7:0] o_features[0:5],
-    output logic              o_ready_feature,
-    output logic              o_last_feature
+    
+    output logic              o_ready_feature
 );
 
     // Hardcode frame dimensions in local params
@@ -41,12 +85,12 @@ module conv (
     localparam        WEIGHT_ROM_DEPTH = 5;
     localparam        DSP_PER_CH       = NUM_DSP48E1 / NUM_FILTERS;
     localparam        OFFSET_GRP_SZ    = DSP_PER_CH / FILTER_SIZE;
-    localparam        INPUT_WIDTH      = 31;
-    localparam        INPUT_HEIGHT     = 31;
+    localparam        INPUT_WIDTH      = 32;
+    localparam        INPUT_HEIGHT     = 32;
     localparam        ROW_START        = 2;
-    localparam        ROW_END          = 28;
+    localparam        ROW_END          = 29;
     localparam        COL_START        = 2;
-    localparam        COL_END          = 28;
+    localparam        COL_END          = 29;
     
     // Weight ROMs
     // 90 distributed RAMs -> 1 per DSP48E1
@@ -58,11 +102,10 @@ module conv (
     // Initialize trainable parameters
     // Weights
     // (* rom_style = "distributed" *)
-    // logic signed [15:0] raw_weights [0:NUM_DSP48E1*WEIGHT_ROM_DEPTH-1];
+    // logic signed [7:0] raw_weights [0:NUM_DSP48E1*WEIGHT_ROM_DEPTH-1];
     // initial $readmemb(WEIGHTS_FILE, raw_weights);
     
-    logic signed [7:0]
-    weights [0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];
+    (* ram_style = "distributed" *) logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];
     
     // integer raw_idx;
     // initial begin
@@ -536,22 +579,21 @@ module conv (
     initial $readmemb(BIASES_FILE, biases);
     
     // Feature RAM line buffers -> try to synthesize block RAMs
-    logic [7:0] feature_rams[0:FILTER_SIZE-1][0:INPUT_WIDTH-1];
-    initial feature_rams = '{default: 0};
+    logic [7:0] feature_rams[0:FILTER_SIZE-1][0:INPUT_WIDTH-1]                = '{default: 0};
     
     // The actual feature window to be multiplied by the filter kernel
-    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1];
+    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1]              = '{default: 0};
     
     // We buffer the initial feature window of the next row
     // It loads during convolution operation of the preceeding row
-    logic [7:0] next_initial_feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1];
+    logic [7:0] next_initial_feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1] = '{default: 0};
     
     // Registers to hold temporary feature RAM data
     // as part of the input feature consumption logic
-    logic signed [7:0] fram_swap_regs[0:NUM_FILTERS-2];
+    logic signed [7:0] fram_swap_regs[0:NUM_FILTERS-2]                        = '{default: 0};
     
     // Signals holding the DSP48E1 operands, used for readability
-    logic [7:0] feature_operands[0:FILTER_SIZE-1][0:2];
+    logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     logic signed [7:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     
     // All 90 DSP48E1 registers (macro is fully pipelined)
@@ -575,6 +617,12 @@ module conv (
     // Convolution Feature location
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
+    
+    // Registered flags
+    logic macc_en;               // can enable sooner?
+    logic consume_features;      // OK
+    logic fram_has_been_full;    // OK
+    logic take_feature_d0, take_feature_d1;
     
     // Convolution FSM, controls DSP48E1 time multiplexing,
     // and convolution feature counters
@@ -608,35 +656,10 @@ module conv (
     logic signed [7:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
     logic signed [7:0] selected_tree_result[0:NUM_FILTERS-1];
     
-    // Flags
-    
-    // Wires driven by combinatorial logic
-    logic macc_en;               // OK
-    logic macc_ready;            // OK
-    logic next_row;              // OK
-    logic consume_features;      // OK
-    logic done_consuming;        // Review
-    
-    // Registers set in sequential processes
-    logic take_feature;          // OK
-    logic process_feature;       // OK
-    logic fram_has_been_full;    // OK
-    logic done_receiving;        // unused
-    logic last_conv_loc;
-    
-    // Flags
-    always_comb begin
-        // Review
-        next_row   = conv_col_ctr == COL_END && state == FIVE;
-        macc_ready = fram_has_been_full;
-    end
-    
     // Control logic for feature consumption
     always_ff @(posedge i_clk)
         if (i_rst) begin
             consume_features <= 0;
-            done_receiving   <= 0;
-            last_conv_loc    <= 0;
         end else begin
             if (conv_col_ctr == (9) && state == FOUR)
                 consume_features <= 0;
@@ -647,11 +670,6 @@ module conv (
                     ))
             begin
                 consume_features <= 1;
-            end
-            if (conv_row_ctr == ROW_END) begin
-                done_receiving <= 1;
-                if (conv_col_ctr == COL_END)
-                    last_conv_loc <= 1;
             end
         end
     
@@ -850,103 +868,99 @@ module conv (
             macc_en        <= 0;
             conv_row_ctr   <= ROW_START;
             conv_col_ctr   <= COL_START;
-            feature_window <= '{default: 0};
         end else begin
             // Start MACC operations when ready
-            if (macc_ready)
+            if (fram_has_been_full)
                 macc_en <= 1;
             
-            // Update convolution column counter and
-            // shift feature window on predetermined states
+            // Update convolution column counter and shift feature window on predetermined states,
+            // this is a column-wise shift, the entire right-most column shifts in feature_rams data
             if (state == TWO | state == FOUR | state == FIVE)
             begin
                 conv_col_ctr <= conv_col_ctr + 1;
+                // Shift to the right, but logically this is a left-shift
+                // Perform the shift for all 5 rows of feature_window
+                // [a,b,c,d,e] << [f,g,h...] = [b,c,d,e,f] 
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_window[i] <=
-                        {feature_rams[i][conv_col_ctr],
-                         feature_window[i][1:4]};
+                    feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][1:4]};
             end
             
             // Update convolution row count
             // Reset column count to column 2
-            if (next_row) begin
+            if (conv_col_ctr == COL_END && state == FIVE) begin
                 conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
             end
             
             // Review: We have 2 ports for the feature RAM (read port and write port)
             //         Does this make it impossible to synthesize distributed RAM?
-            if (next_row | (macc_ready & ~macc_en))
+            if ((conv_col_ctr == COL_END && state == FIVE) | (fram_has_been_full & ~macc_en))
                 feature_window <= next_initial_feature_window;
         end
     end
     
     // Next initial feature window curation
+    // TODO: Really need to study the hardware implementation of this logic
+    //       Seems to be come bugs with the way next_initial_feature_window is initially set
     always_ff @(posedge i_clk)
         if (i_rst)
+            // TODO: Not all values need to be reset, but for simplicity we'll keep the reset on all 5x5 values
             next_initial_feature_window <= '{default: 0};
         else
-            if (fram_has_been_full)
-            begin
+            if (fram_has_been_full) begin
                 // Input feature fans out to this preloading logic
                 // as well as the feature RAM consumption logic
                 if (fram_col_ctr <= (COL_START + FILTER_SIZE - 1))
-                    next_initial_feature_window[0][fram_col_ctr-2]
-                        <= i_feature;
+                    next_initial_feature_window[0][fram_col_ctr-2] <= i_feature;
                 
                 // Align data when the preload block is full
                 if (fram_col_ctr == (COL_START + FILTER_SIZE))
                     // Is it possible to implement a column-wise shift operation to shorten this code?
-                    for (int i = 0; i < FILTER_SIZE; i++)
-                    begin
+                    for (int i = 0; i < FILTER_SIZE; i++) begin
                         for (int j = 0; j < FILTER_SIZE-1; j++)
-                            next_initial_feature_window[j][i]
-                                <= next_initial_feature_window[j+1][i];
-                        next_initial_feature_window[FILTER_SIZE-1][i]
-                            <= next_initial_feature_window[0][i];
+                            next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
+                        next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
                     end
-            end
-            else
+            end else
                 if (fram_col_ctr <= (COL_START + FILTER_SIZE - 1))
-                    next_initial_feature_window
-                        [fram_row_ctr][fram_col_ctr-2]
-                            <= i_feature;
+                    next_initial_feature_window[fram_row_ctr][fram_col_ctr-2] <= i_feature;
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            take_feature       <= 0;
+            take_feature_d0    <= 0;
             fram_has_been_full <= 0;
             fram_row_ctr       <= ROW_START;
             fram_col_ctr       <= COL_START;
         end else begin
-            process_feature <= take_feature;
+            take_feature_d1 <= take_feature_d0;
+            
             if (consume_features) begin
                 // Feature consumption control signal
                 // sent to FWFT FIFO read enable port
-                take_feature <= 1;
-                if ((conv_col_ctr == (9) && state == THREE) |
-                    (conv_col_ctr == (9) && state == FOUR))
-                begin
-                    take_feature <= 0;
-                end
+                take_feature_d0 <= 1;
+                
+                if ((conv_col_ctr == (9) && state == THREE) | (conv_col_ctr == (9) && state == FOUR))
+                    take_feature_d0 <= 0;
                 
                 // Feature RAM filling logic
-                if (fram_has_been_full)
-                begin
-                    if (take_feature)
-                        for (int i = 0; i < FILTER_SIZE-1; i++)
-                            fram_swap_regs[i]
-                                <= feature_rams[i+1][fram_col_ctr];
-                    if (process_feature)
-                        for (int i = 0; i < FILTER_SIZE-1; i++)
-                            feature_rams[i][fram_col_ctr]
-                                <= fram_swap_regs[i];
-                end
+                if (fram_has_been_full) begin
+                    for (int i = 0; i < FILTER_SIZE-1; i++) begin
+                        if (take_feature_d0)
+                            fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+                            
+                        if (take_feature_d1)
+                            feature_rams[i][fram_col_ctr] <= fram_swap_regs[i];
+                    end
                 
-                // Consume input feature from FWFT FIFO
-                if (process_feature)
-                    feature_rams[fram_row_ctr][fram_col_ctr]
-                        <= i_feature;
+                // feature RAM is set with 2 different values at potentially different
+                // addresses in the same clock cycle? So this already uses 2 true dual
+                // ports. If there is another read in the same cycle then this data
+                // cant be used in BRAM or distributed RAM, and probably will cause
+                // fabric FFs to be inferred
+                
+                // Consume input feature from input image pixel data FIFO
+                if (take_feature_d1)
+                    feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
                 
                 // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
@@ -960,6 +974,7 @@ module conv (
             end
         end
     
+    // 3:1 8-bit mux for conv block output data port register
     always_ff @(posedge i_clk)
         if (adder_tree_valid_sr[0][7])
             selected_tree_result <= adder1_result;
@@ -968,14 +983,14 @@ module conv (
         else if (adder_tree_valid_sr[2][7])
             selected_tree_result <= adder3_result;
     
+    // Registering output data/control signals
     always_comb
     begin
         o_feature_valid <= adder_tree_valid_sr[0][7] |
                            adder_tree_valid_sr[1][7] |
                            adder_tree_valid_sr[2][7];
         o_features      <= selected_tree_result;
-        o_ready_feature <= take_feature;
-        o_last_feature  <= last_conv_loc;
+        o_ready_feature <= take_feature_d0;
     end
     
 endmodule
