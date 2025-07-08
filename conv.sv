@@ -24,11 +24,10 @@
     
     Verify control logic
     
-    Logic mapping
-    - feature_rams, feature_window, next_initial_feature_window, fram_swap_regs
     Registering vs combinatorial naming of
     - feature_operands/weight_operands
-    
+    Logic mapping
+    - feature_rams, feature_window, next_initial_feature_window, fram_swap_regs
     
     feature_window is 5x5
     feature_window is the data which feeds feature_operands,
@@ -50,15 +49,31 @@
     Read/Write logic currently
         - Read for 3 out of 5 states by feature_window
         - Read for 28/46 cycles by swap registers
-        - Write for 28/46 cycles by swap registers
-        - Write for 28/46 cycles by input feature
+        - Write for 28/46 cycles by swap registers or input feature
+            (bottom row is written by input feature, top 4 rows
+                written by swap registers. For until the feature RAMs
+                    have been full, all locations are written by input features)
+        The question is, can we combine the 2 reads into a single read?
+            If so, we can synthesize distributed RAM
     
     
-    
-    fram_swap_regs may have a bug, its controlled by num filters instead of filter size
-    next_initial_feature_window has bugs
     
     Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
+    
+    Could try some hacky tricks with DSP operands like using 3 input bytes for 
+        the DSPs, and for MSBytes just shift output back to correct value
+    
+    Also may need to get hacky with the feature RAMs and have wider outputs so we can
+        effectively read 2 bytes per read cycle
+            The way to do it, is to not just inhale features every cycle for 28 cycles
+                straight, but to consume an input feature on the same states as
+                    when feature RAM data is read and shifted into feature_window.
+                        Then we would have a read/write happening each of the
+                            3 out of 5 states. The read fans out to feature_window
+                                and swap registers. The write data is routed from
+                                    swap registers for 4 of the rows and input
+                                        feature for 1 row.
+                        
 
 */
 //////////////////////////////////////////////////////////////////////////////////
@@ -590,7 +605,7 @@ module conv (
     
     // Registers to hold temporary feature RAM data
     // as part of the input feature consumption logic
-    logic signed [7:0] fram_swap_regs[0:NUM_FILTERS-2]                        = '{default: 0};
+    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2]                        = '{default: 0};
     
     // Signals holding the DSP48E1 operands, used for readability
     logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
