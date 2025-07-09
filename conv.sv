@@ -55,6 +55,17 @@
                     have been full, all locations are written by input features)
         The question is, can we combine the 2 reads into a single read?
             If so, we can synthesize distributed RAM
+            
+            We can't do this simply with distributed RAM as the reads are not
+                from the same addresses, so we need to get creative.
+                
+                Option 1: Use 2x clock domain for reads so we can read twice per
+                    system clock tick
+                Option 2: Use BRAM with wide data bus so we can effectively read multiple
+                    values within a single clock cycle. This might mean we need to arrange
+                        the data so that data is stored in columns, or maybe in wider groups
+                            like groups of 5 or 6 features or something. It might make sense to store
+                                the data as 32 5x8 feature columns. 
     
     
     
