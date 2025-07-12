@@ -21,7 +21,9 @@ module feature_fwft(
     logic [FIFO_ADDRW-1:0] fifo_wr_addr;
     logic                  valid;
     
+    // Register input feature into IOB (directive specified in top level)
     logic signed [7:0] d_in_feature;
+    
     always_ff @(posedge i_clk)
         d_in_feature <= i_in_feature;
     

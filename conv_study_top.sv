@@ -3,19 +3,15 @@
 
 /*
 TODO:
-    Verify control logic
-    
-    Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
-
-    Place registers in IOB
-    
-    change parallel IO to serial IO over SPI interface
+    Place reset in IOB?
     
     overclock DSP48E1, try different clocking techniques
         ([1x, 2x CLKOUT0/CLKOUT1],
         [1x, 2x CLKOUT0 w/ BUFGDIV],
         [1x w/ dual edge triggering],
         [2x w/ MCPs])
+    
+    change parallel IO to serial IO over SPI interface
     
     Testbenches for conv, pool, post_processing
     
@@ -51,7 +47,6 @@ module conv_study_top (
     logic              conv_feature_in_valid;
     logic signed [7:0] conv_feature_in;
     
-    logic              conv_last_feature;
     logic              conv_receive_feature;
     
     logic              pool_features_in_valid;
@@ -78,7 +73,6 @@ module conv_study_top (
                     .i_feature_valid(conv_feature_in_valid),
                     .i_feature(conv_feature_in),
                     .o_ready_feature(conv_receive_feature),
-                    .o_last_feature(conv_last_feature),
                     .o_feature_valid(pool_features_in_valid),
                     .o_features(pool_features_in));
     

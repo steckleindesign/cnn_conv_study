@@ -2,6 +2,8 @@
 //////////////////////////////////////////////////////////////////////////////////
 /*
 
+    Study: Get outputs of DSP48s to carry chain resources efficiently
+
     Latency due to Design
         6 filters for conv1, 5x5 filter (25 * ops), 27x27 conv ops (730)
         = 6*(5*5)*(27*27) = 109350 * ops / 90 DSPs = 1215 cycs theoretically
@@ -15,11 +17,6 @@
     adder 1-2:                        15, 18,  9,  5,  3,  2,  1
     adder 2-2:                             5, 18, 14,  7,  4,  2,  1
     adder 3-2:                                    10, 20, 10,  5,  3,  2,  1
-    
-    TODO: Get outputs of DSP48s to carry chain resources efficiently
-          Should we implement some of the adder tree in the DSPs?
-    
-    
     
     
     Verify control logic
@@ -68,7 +65,6 @@
                                 the data as 32 5x8 feature columns. 
     
     
-    
     Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
     
     Could try some hacky tricks with DSP operands like using 3 input bytes for 
@@ -84,7 +80,6 @@
                                 and swap registers. The write data is routed from
                                     swap registers for 4 of the rows and input
                                         feature for 1 row.
-                        
 
 */
 //////////////////////////////////////////////////////////////////////////////////
@@ -131,7 +126,7 @@ module conv (
     // logic signed [7:0] raw_weights [0:NUM_DSP48E1*WEIGHT_ROM_DEPTH-1];
     // initial $readmemb(WEIGHTS_FILE, raw_weights);
     
-    (* ram_style = "distributed" *) logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];
+    logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];
     
     // integer raw_idx;
     // initial begin
@@ -604,8 +599,25 @@ module conv (
     logic signed [7:0] biases[0:NUM_FILTERS-1];
     initial $readmemb(BIASES_FILE, biases);
     
-    // Feature RAM line buffers -> try to synthesize block RAMs
-    logic [7:0] feature_rams[0:FILTER_SIZE-1][0:INPUT_WIDTH-1]                = '{default: 0};
+    logic [7:0] feature_ram_din  [0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_we   [0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_addra[0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_addrb[0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_douta[0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_doutb[0:FILTER_SIZE-1];
+    
+    generate
+    genvar i;
+        for (i = 0; i < FILTER_SIZE; i++)
+            feature_distributed_ram
+                fram_inst (.clk(i_clk),
+                           .we  (feature_ram_we   [i]),
+                           .a   (feature_ram_addra[i]),
+                           .d   (feature_ram_din  [i]),
+                           .dpra(feature_ram_addrb[i]),
+                           .qspo(feature_ram_douta[i]),
+                           .qdpo(feature_ram_doutb[i]));
+    endgenerate
     
     // The actual feature window to be multiplied by the filter kernel
     logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1]              = '{default: 0};
@@ -684,20 +696,15 @@ module conv (
     
     // Control logic for feature consumption
     always_ff @(posedge i_clk)
-        if (i_rst) begin
+        if (i_rst)
             consume_features <= 0;
-        end else begin
+        else
             if (conv_col_ctr == (9) && state == FOUR)
                 consume_features <= 0;
             else if (i_feature_valid &&
-                    (
-                        (conv_col_ctr == (19) && state == FIVE) ||
-                        ~fram_has_been_full
-                    ))
-            begin
-                consume_features <= 1;
-            end
-        end
+                        ((conv_col_ctr == (19) && state == FIVE) ||
+                            ~fram_has_been_full))
+                                consume_features <= 1;
     
     always_ff @(posedge i_clk)
         if (i_rst)
@@ -899,8 +906,12 @@ module conv (
             if (fram_has_been_full)
                 macc_en <= 1;
             
+            if (state == ONE | state == THREE | state == FOUR)
+                for (int i = 0; i < FILTER_SIZE; i++)
+                    feature_ram_addrb[i] <= conv_col_ctr;
+            
             // Update convolution column counter and shift feature window on predetermined states,
-            // this is a column-wise shift, the entire right-most column shifts in feature_rams data
+            // this is a column-wise shift, the entire right-most column shifts in feature data
             if (state == TWO | state == FOUR | state == FIVE)
             begin
                 conv_col_ctr <= conv_col_ctr + 1;
@@ -908,7 +919,7 @@ module conv (
                 // Perform the shift for all 5 rows of feature_window
                 // [a,b,c,d,e] << [f,g,h...] = [b,c,d,e,f] 
                 for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_window[i] <= {feature_rams[i][conv_col_ctr], feature_window[i][1:4]};
+                    feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
             end
             
             // Update convolution row count
@@ -954,48 +965,49 @@ module conv (
     always_ff @(posedge i_clk)
         if (i_rst) begin
             take_feature_d0    <= 0;
+            take_feature_d1    <= 0;
             fram_has_been_full <= 0;
             fram_row_ctr       <= ROW_START;
             fram_col_ctr       <= COL_START;
         end else begin
+            feature_ram_we  <= '{default: 0};
             take_feature_d1 <= take_feature_d0;
             
             if (consume_features) begin
-                // Feature consumption control signal
-                // sent to FWFT FIFO read enable port
+                // Feature consumption control (FWFT FIFO read enable)
                 take_feature_d0 <= 1;
-                
                 if ((conv_col_ctr == (9) && state == THREE) | (conv_col_ctr == (9) && state == FOUR))
                     take_feature_d0 <= 0;
                 
-                // Feature RAM filling logic
-                if (fram_has_been_full) begin
+                // Once feature RAM has been filled before, feature consumption
+                // logic requires shifting feature RAM down a row via swap register logic
+                if (fram_has_been_full)
                     for (int i = 0; i < FILTER_SIZE-1; i++) begin
+                        feature_ram_addra[i] <= fram_col_ctr;
+                        
                         if (take_feature_d0)
-                            fram_swap_regs[i] <= feature_rams[i+1][fram_col_ctr];
+                            fram_swap_regs [i] <= feature_ram_douta[i+1];
                             
-                        if (take_feature_d1)
-                            feature_rams[i][fram_col_ctr] <= fram_swap_regs[i];
+                        if (take_feature_d1) begin
+                            feature_ram_we [i] <= 1;
+                            feature_ram_din[i] <= fram_swap_regs[i];
+                        end
                     end
                 
-                // feature RAM is set with 2 different values at potentially different
-                // addresses in the same clock cycle? So this already uses 2 true dual
-                // ports. If there is another read in the same cycle then this data
-                // cant be used in BRAM or distributed RAM, and probably will cause
-                // fabric FFs to be inferred
-                
                 // Consume input feature from input image pixel data FIFO
-                if (take_feature_d1)
-                    feature_rams[fram_row_ctr][fram_col_ctr] <= i_feature;
+                if (take_feature_d1) begin
+                    feature_ram_we   [fram_row_ctr] <= 1;
+                    feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
+                    feature_ram_din  [fram_row_ctr] <= i_feature;
+                end
                 
-                // Feature RAM addr control logic
                 fram_col_ctr <= fram_col_ctr + 1;
                 if (fram_col_ctr == COL_END) begin
                     fram_col_ctr <= COL_START;
                     if (fram_row_ctr == FILTER_SIZE-1)
                         fram_has_been_full <= 1;
                     else
-                        fram_row_ctr <= fram_row_ctr+1;
+                        fram_row_ctr <= fram_row_ctr + 1;
                 end
             end
         end

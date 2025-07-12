@@ -13,14 +13,15 @@ module post_processing (
 );
     
     // Post processing stages
-    logic signed [7:0] stage0 [0:5];
-    logic signed [7:0] stage1 [0:2];
-    logic signed [7:0] stage2 [0:1];
+    logic signed [7:0] stage0[0:5];
+    logic signed [7:0] stage1[0:2];
+    logic signed [7:0] stage2[0:1];
     logic signed [7:0] processed_feature;
     
     always_ff @(posedge i_clk)
     begin
-        stage0 <= i_features_in;
+        if (i_features_valid)
+            stage0 <= i_features_in;
         
         for (int i = 0; i < 3; i++)
             stage1[i] <= stage0[i*2] + stage0[i*2+1];
