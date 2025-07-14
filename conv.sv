@@ -3,18 +3,15 @@
 /*
 
     Current steps:
-        compute cycle accurate pipeline delay to determine valid shift register
-        determine how data is shifted into valid shift register especially at new rows
-        timings for feature distributed RAM
-        take feature control logic
         decide where state machine should start and what states/counts to consume features
+        timings for feature distributed RAM and take feature control logic
 
     Study: Get outputs of DSP48s to carry chain resources efficiently
            Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
 
     Latency due to Design
-        6 filters for conv1, 5x5 filter (25 * ops), 27x27 conv ops (730)
-        = 6*(5*5)*(27*27) = 109350 * ops / 90 DSPs = 1215 cycs theoretically
+        6 filters for conv1, 5x5 filter, 28x28 feature map
+        = 6*(5*5)*(28*28) = 117600 multiplies / 90 DSPs = 1307 cycles
         
     State:         0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14
     
@@ -639,7 +636,7 @@ module conv (
     state_t state, next_state;
     
     // Adder Tree
-    logic [7:0] adder_tree_valid_sr[0:2];
+    logic       [12:0] adder_tree_valid_sr[0:2];
     logic signed [7:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
     logic signed [7:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
     logic signed [7:0] adder1_stage3[0:NUM_FILTERS-1][0:8];  // 9 adder outs from stage 2
@@ -879,10 +876,10 @@ module conv (
                 end
     
     always_ff @(posedge i_clk) begin
-        static state_t valid_states[3] = '{ONE, TWO, FOUR};
+        static state_t valid_states[3] = '{TWO, FOUR, FIVE};
         for (int i = 0; i < 3; i++)
             adder_tree_valid_sr[i] <=
-                {adder_tree_valid_sr[i][6:0], macc_en ? state == valid_states[i]: 1'b0};
+                {adder_tree_valid_sr[i][11:0], macc_en ? state == valid_states[i]: 1'b0};
     end
     
 //    TODO: Syntax simplify
@@ -966,17 +963,19 @@ module conv (
     
     // 3:1 8-bit (8 LUTs, 2 slices, 1 CLB) mux to output data port register
     always_comb
-        if (adder_tree_valid_sr[0][7])
+        if (adder_tree_valid_sr[0][12])
             selected_tree_result <= adder1_result;
-        else if (adder_tree_valid_sr[1][7])
+        else if (adder_tree_valid_sr[1][12])
             selected_tree_result <= adder2_result;
-        else if (adder_tree_valid_sr[2][7])
+        else if (adder_tree_valid_sr[2][12])
+            selected_tree_result <= adder3_result;
+        else
             selected_tree_result <= adder3_result;
     
     always_ff @(posedge i_clk) begin
-        o_feature_valid <= adder_tree_valid_sr[0][7] |
-                           adder_tree_valid_sr[1][7] |
-                           adder_tree_valid_sr[2][7];
+        o_feature_valid <= adder_tree_valid_sr[0][12] |
+                           adder_tree_valid_sr[1][12] |
+                           adder_tree_valid_sr[2][12];
         o_features      <= selected_tree_result;
         o_ready_feature <= take_feature_d0;
     end
