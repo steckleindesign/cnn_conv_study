@@ -37,6 +37,7 @@
         then throughout the convolutions gets shifted down, input features
         are shifted into the bottom row of next_initial_feature_window
     
+    feature_distributed_ram
     feature_rams is 32x5
     feature_rams first two and last two columns are zero-padded so non-zero
         data dimensions is 28x5, first two and last two feature map rows are zeros
@@ -656,16 +657,16 @@ module conv (
     
     // Feature RAM location
     logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
-    logic [$clog2(COL_END)-1:0]     fram_col_ctr;
+    logic [$clog2(COL_END)    -1:0] fram_col_ctr;
     
     // Convolution Feature location
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
     // Registered flags
-    logic macc_en;               // fix timing of this signal
-    logic consume_features;      // OK
-    logic fram_has_been_full;    // OK
+    logic macc_en;            // fix timing of this signal
+    logic consume_features;   // OK
+    logic fram_has_been_full; // OK
     logic take_feature_d0, take_feature_d1;
     
     // Convolution FSM, controls DSP48E1 time multiplexing,
@@ -704,7 +705,13 @@ module conv (
     
     next state logic
     
-    adder tree logic
+    feature consumption flag
+    
+    feature RAM consumption logic, full flag, address counters, MACC enable flag
+    
+    loading of next initial feature window
+    
+    convolution counters and feature window loading
     
     registering DSP operands
     
@@ -712,13 +719,7 @@ module conv (
     
     adder tree valid shift register logic
     
-    convolution counters and feature window loading
-    
-    loading of next initial feature window
-    
-    feature consumption flag
-    
-    feature RAM consumption logic, full flag, address counters, MACC enable flag
+    adder tree logic
     
     register output signals
     
@@ -761,6 +762,165 @@ module conv (
                 next_state = ONE;
             end
         endcase
+    
+    always_ff @(posedge i_clk)
+        if (i_rst)
+            consume_features <= 0;
+        else
+            if (conv_col_ctr == (9) && state == FOUR)
+                consume_features <= 0;
+            else if (i_feature_valid &&
+                        (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
+                                consume_features <= 1;
+    
+    always_ff @(posedge i_clk)
+        if (i_rst) begin
+            take_feature_d0    <= 0;
+            take_feature_d1    <= 0;
+            fram_has_been_full <= 0;
+            macc_en            <= 0;
+            fram_row_ctr       <= ROW_START;
+            fram_col_ctr       <= COL_START;
+        end else begin
+            feature_ram_we  <= '{default: 0};
+            take_feature_d1 <= take_feature_d0;
+            
+            if (consume_features) begin
+                // Feature consumption control (FWFT FIFO read enable)
+                take_feature_d0 <= 1;
+                if ((conv_col_ctr == (9) && state == THREE) | (conv_col_ctr == (9) && state == FOUR))
+                    take_feature_d0 <= 0;
+                // Feature consumption logic before feature RAM has been full
+                if (take_feature_d1) begin
+                    feature_ram_we   [fram_row_ctr] <= 1;
+                    feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
+                    feature_ram_din  [fram_row_ctr] <= i_feature;
+                end
+                // Feature consumption logic once feature RAM has been full
+                if (fram_has_been_full)
+                    for (int i = 0; i < FILTER_SIZE-1; i++) begin
+                        feature_ram_addra[i] <= fram_col_ctr;
+                        if (take_feature_d0)
+                            fram_swap_regs [i] <= feature_ram_douta[i+1];
+                        if (take_feature_d1) begin
+                            feature_ram_we [i] <= 1;
+                            feature_ram_din[i] <= fram_swap_regs[i];
+                        end
+                    end
+                fram_col_ctr <= fram_col_ctr + 1;
+                if (fram_col_ctr == COL_END) begin
+                    fram_col_ctr <= COL_START;
+                    if (fram_row_ctr == FILTER_SIZE-1) begin
+                        fram_has_been_full <= 1;
+                        macc_en            <= 1;
+                    end else
+                        fram_row_ctr <= fram_row_ctr + 1;
+                end
+            end
+        end
+    
+    always_ff @(posedge i_clk)
+        if (i_rst)
+            // Not all values need to be reset, but its not bad if the 25x8=200 FFs share the same control set
+            next_initial_feature_window <= '{default: 0};
+        else
+            if (~fram_has_been_full)
+                if (fram_col_ctr < FILTER_SIZE)
+                    next_initial_feature_window[fram_row_ctr][fram_col_ctr] <= i_feature;
+            else if (fram_col_ctr < FILTER_SIZE) begin
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    next_initial_feature_window[i][fram_col_ctr]
+                        <= next_initial_feature_window[i+1][fram_col_ctr];
+                next_initial_feature_window[FILTER_SIZE-1][fram_col_ctr] <= i_feature;
+            end
+                
+    
+    always_ff @(posedge i_clk)
+        if (i_rst) begin
+            conv_row_ctr <= ROW_START;
+            conv_col_ctr <= COL_START;
+        end else begin
+            if (state == ONE | state == THREE | state == FOUR) begin
+                for (int i = 0; i < FILTER_SIZE; i++)
+                    feature_ram_addrb[i] <= conv_col_ctr;
+                conv_col_ctr <= conv_col_ctr + 1;
+            end
+            
+            if (state == TWO | state == FOUR | state == FIVE)
+                for (int i = 0; i < FILTER_SIZE; i++)
+                    feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
+            
+            if ((conv_col_ctr == COL_END && state == FIVE)) // or start of MACC operations
+                feature_window <= next_initial_feature_window;
+            
+            if (conv_col_ctr == COL_END && state == FIVE) begin
+                conv_row_ctr <= conv_row_ctr + 1;
+                conv_col_ctr <= COL_START;
+            end
+            
+        end
+    
+    always_ff @(posedge i_clk) begin
+        int feature_offsets[3];
+        int weight_offsets[3];
+        case(state)
+            ONE: begin
+                feature_offsets = '{-2,-1,0};
+                weight_offsets  = '{0,1,2};
+            end
+            TWO: begin
+                feature_offsets = '{1,2,-1};
+                weight_offsets  = '{3,4,0};
+            end
+            THREE: begin
+                feature_offsets = '{-1,0,1};
+                weight_offsets  = '{1,2,3};
+            end
+            FOUR: begin
+                feature_offsets = '{2,-1,0};
+                weight_offsets  = '{4,0,1};
+            end
+            FIVE: begin
+                feature_offsets = '{0,1,2};
+                weight_offsets  = '{2,3,4};
+            end
+        endcase
+        assign_feature_operands(feature_offsets);
+        assign_weight_operands(weight_offsets);
+    end
+    
+    task assign_feature_operands(input int offsets[3]);
+        for (int i = 0; i < FILTER_SIZE; i++)
+            for (int j = 0; j < OFFSET_GRP_SZ; j++)
+                feature_operands[i][j] <= feature_window[i][offsets[j]+2];
+    endtask
+    
+    task assign_weight_operands(input int offsets[3]);
+        for (int i = 0; i < NUM_FILTERS; i++)
+            for (int j = 0; j < FILTER_SIZE; j++)
+                for (int k = 0; k < OFFSET_GRP_SZ; k++)
+                    weight_operands[i][j][k] <= weights[i][j][k][offsets[k]];
+    endtask
+    
+    always_ff @(posedge i_clk)
+        for (int i = 0; i < NUM_FILTERS; i++)
+            for (int j = 0; j < FILTER_SIZE; j++)
+                for (int k = 0; k < OFFSET_GRP_SZ; k++)
+                begin
+                    dsp_a1[i][OFFSET_GRP_SZ*j+k] <= weight_operands[i][j][k];
+                    dsp_b1[i][OFFSET_GRP_SZ*j+k] <= feature_operands[j][k];
+                    dsp_a2[i][OFFSET_GRP_SZ*j+k] <= dsp_a1[i][OFFSET_GRP_SZ*j+k];
+                    dsp_b2[i][OFFSET_GRP_SZ*j+k] <= dsp_b1[i][OFFSET_GRP_SZ*j+k];
+                    dsp_m [i][OFFSET_GRP_SZ*j+k] <= dsp_a2[i][OFFSET_GRP_SZ*j+k] * dsp_b2[i][OFFSET_GRP_SZ*j+k];
+                    dsp_p [i][OFFSET_GRP_SZ*j+k] <= dsp_m [i][OFFSET_GRP_SZ*j+k];
+                end
+    
+    always_ff @(posedge i_clk) begin
+        static state_t valid_states[3] = '{ONE, TWO, FOUR};
+        for (int i = 0; i < 3; i++)
+            adder_tree_valid_sr[i] <=
+                {adder_tree_valid_sr[i][6:0], macc_en ? state == valid_states[i]: 1'b0};
+    end
     
 //    TODO: Syntax simplify
 //          for each adder tree
@@ -840,177 +1000,6 @@ module conv (
             adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
         end
     end
-    
-    always_ff @(posedge i_clk) begin
-        int feature_offsets[3];
-        int weight_offsets[3];
-        case(state)
-            ONE: begin
-                feature_offsets = '{-2,-1,0};
-                weight_offsets  = '{0,1,2};
-            end
-            TWO: begin
-                feature_offsets = '{1,2,-1};
-                weight_offsets  = '{3,4,0};
-            end
-            THREE: begin
-                feature_offsets = '{-1,0,1};
-                weight_offsets  = '{1,2,3};
-            end
-            FOUR: begin
-                feature_offsets = '{2,-1,0};
-                weight_offsets  = '{4,0,1};
-            end
-            FIVE: begin
-                feature_offsets = '{0,1,2};
-                weight_offsets  = '{2,3,4};
-            end
-        endcase
-        assign_feature_operands(feature_offsets);
-        assign_weight_operands(weight_offsets);
-    end
-    
-    task assign_feature_operands(input int offsets[3]);
-        for (int i = 0; i < FILTER_SIZE; i++)
-            for (int j = 0; j < 3; j++)
-                feature_operands[i][j] <= feature_window[i][offsets[j]+2];
-    endtask
-    
-    task assign_weight_operands(input int offsets[3]);
-        for (int i = 0; i < NUM_FILTERS; i++)
-            for (int j = 0; j < FILTER_SIZE; j++)
-                for (int k = 0; k < OFFSET_GRP_SZ; k++)
-                    weight_operands[i][j][k] <= weights[i][j][k][offsets[k]];
-    endtask
-    
-    always_ff @(posedge i_clk)
-        for (int i = 0; i < NUM_FILTERS; i++)
-            for (int j = 0; j < FILTER_SIZE; j++)
-                for (int k = 0; k < OFFSET_GRP_SZ; k++)
-                begin
-                    dsp_a1[i][OFFSET_GRP_SZ*j+k] <= weight_operands[i][j][k];
-                    dsp_b1[i][OFFSET_GRP_SZ*j+k] <= feature_operands[j][k];
-                    dsp_a2[i][OFFSET_GRP_SZ*j+k] <= dsp_a1[i][OFFSET_GRP_SZ*j+k];
-                    dsp_b2[i][OFFSET_GRP_SZ*j+k] <= dsp_b1[i][OFFSET_GRP_SZ*j+k];
-                    dsp_m [i][OFFSET_GRP_SZ*j+k] <= dsp_a2[i][OFFSET_GRP_SZ*j+k] * dsp_b2[i][OFFSET_GRP_SZ*j+k];
-                    dsp_p [i][OFFSET_GRP_SZ*j+k] <= dsp_m [i][OFFSET_GRP_SZ*j+k];
-                end
-    
-    // Shift adder tree valid signal shift register
-    always_ff @(posedge i_clk) begin
-        static state_t valid_states[3] = '{ONE, TWO, FOUR};
-        for (int i = 0; i < 3; i++)
-            adder_tree_valid_sr[i] <=
-                {adder_tree_valid_sr[i][6:0],
-                 macc_en ? state == valid_states[i]: 1'b0};
-    end
-    
-    always_ff @(posedge i_clk)
-        if (i_rst) begin
-            conv_row_ctr <= ROW_START;
-            conv_col_ctr <= COL_START;
-        end else begin
-            if (state == ONE | state == THREE | state == FOUR) begin
-                for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_ram_addrb[i] <= conv_col_ctr;
-                conv_col_ctr <= conv_col_ctr + 1;
-            end
-            
-            if (state == TWO | state == FOUR | state == FIVE)
-                for (int i = 0; i < FILTER_SIZE; i++)
-                    feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
-            
-            if ((conv_col_ctr == COL_END && state == FIVE)) // or start of MACC operations
-                feature_window <= next_initial_feature_window;
-            
-            if (conv_col_ctr == COL_END && state == FIVE) begin
-                conv_row_ctr <= conv_row_ctr + 1;
-                conv_col_ctr <= COL_START;
-            end
-            
-        end
-    
-    // Next initial feature window curation
-    // TODO: Really need to study the hardware implementation of this logic
-    //       Seems to be come bugs with the way next_initial_feature_window is initially set
-    always_ff @(posedge i_clk)
-        if (i_rst)
-            // TODO: Not all values need to be reset, but for simplicity we'll keep the reset on all 5x5 values
-            next_initial_feature_window <= '{default: 0};
-        else
-            if (fram_has_been_full) begin
-                // Input feature fans out to this preloading logic
-                // as well as the feature RAM consumption logic
-                if (fram_col_ctr <= (COL_START + FILTER_SIZE - 1))
-                    next_initial_feature_window[0][fram_col_ctr-2] <= i_feature;
-                
-                // Align data when the preload block is full
-                if (fram_col_ctr == (COL_START + FILTER_SIZE))
-                    // Is it possible to implement a column-wise shift operation to shorten this code?
-                    for (int i = 0; i < FILTER_SIZE; i++) begin
-                        for (int j = 0; j < FILTER_SIZE-1; j++)
-                            next_initial_feature_window[j][i] <= next_initial_feature_window[j+1][i];
-                        next_initial_feature_window[FILTER_SIZE-1][i] <= next_initial_feature_window[0][i];
-                    end
-            end else
-                if (fram_col_ctr <= (COL_START + FILTER_SIZE - 1))
-                    next_initial_feature_window[fram_row_ctr][fram_col_ctr-2] <= i_feature;
-    
-    always_ff @(posedge i_clk)
-        if (i_rst)
-            consume_features <= 0;
-        else
-            if (conv_col_ctr == (9) && state == FOUR)
-                consume_features <= 0;
-            else if (i_feature_valid &&
-                        (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
-                                consume_features <= 1;
-    
-    always_ff @(posedge i_clk)
-        if (i_rst) begin
-            take_feature_d0    <= 0;
-            take_feature_d1    <= 0;
-            fram_has_been_full <= 0;
-            macc_en            <= 0;
-            fram_row_ctr       <= ROW_START;
-            fram_col_ctr       <= COL_START;
-        end else begin
-            feature_ram_we  <= '{default: 0};
-            take_feature_d1 <= take_feature_d0;
-            
-            if (consume_features) begin
-                // Feature consumption control (FWFT FIFO read enable)
-                take_feature_d0 <= 1;
-                if ((conv_col_ctr == (9) && state == THREE) | (conv_col_ctr == (9) && state == FOUR))
-                    take_feature_d0 <= 0;
-                // Feature consumption logic before feature RAM has been full
-                if (take_feature_d1) begin
-                    feature_ram_we   [fram_row_ctr] <= 1;
-                    feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
-                    feature_ram_din  [fram_row_ctr] <= i_feature;
-                end
-                // Feature consumption logic once feature RAM has been full
-                if (fram_has_been_full)
-                    for (int i = 0; i < FILTER_SIZE-1; i++) begin
-                        feature_ram_addra[i] <= fram_col_ctr;
-                        if (take_feature_d0)
-                            fram_swap_regs [i] <= feature_ram_douta[i+1];
-                        if (take_feature_d1) begin
-                            feature_ram_we [i] <= 1;
-                            feature_ram_din[i] <= fram_swap_regs[i];
-                        end
-                    end
-                fram_col_ctr <= fram_col_ctr + 1;
-                if (fram_col_ctr == COL_END) begin
-                    fram_col_ctr <= COL_START;
-                    if (fram_row_ctr == FILTER_SIZE-1) begin
-                        fram_has_been_full <= 1;
-                        macc_en            <= 1;
-                    end else
-                        fram_row_ctr <= fram_row_ctr + 1;
-                end
-            end
-        end
     
     // 3:1 8-bit (8 LUTs, 2 slices, 1 CLB) mux to output data port register
     always_comb
