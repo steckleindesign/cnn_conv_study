@@ -2,7 +2,15 @@
 //////////////////////////////////////////////////////////////////////////////////
 /*
 
+    Current steps:
+        compute cycle accurate pipeline delay to determine valid shift register
+        determine how data is shifted into valid shift register especially at new rows
+        timings for feature distributed RAM
+        take feature control logic
+        decide where state machine should start and what states/counts to consume features
+
     Study: Get outputs of DSP48s to carry chain resources efficiently
+           Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
 
     Latency due to Design
         6 filters for conv1, 5x5 filter (25 * ops), 27x27 conv ops (730)
@@ -18,13 +26,7 @@
     adder 2-2:                             5, 18, 14,  7,  4,  2,  1
     adder 3-2:                                    10, 20, 10,  5,  3,  2,  1
     
-    
-    Verify control logic
-    
-    Registering vs combinatorial naming of
-    - feature_operands/weight_operands
-    Logic mapping
-    - feature_rams, feature_window, next_initial_feature_window, fram_swap_regs
+    feature_distributed_ram, feature_window, next_initial_feature_window, fram_swap_regs
     
     feature_window is 5x5
     feature_window is the data which feeds feature_operands,
@@ -44,50 +46,10 @@
     feature_rams is the data which feeds feature_window by shifting in data in each 5 rows
     feature_rams data is written directly by input features
     feature_rams data is shifted down via swap register logic
-    Read/Write logic currently
-        - Read for 3 out of 5 states by feature_window
-        - Read for 28/46 cycles by swap registers
-        - Write for 28/46 cycles by swap registers or input feature
-            (bottom row is written by input feature, top 4 rows
-                written by swap registers. For until the feature RAMs
-                    have been full, all locations are written by input features)
-        The question is, can we combine the 2 reads into a single read?
-            If so, we can synthesize distributed RAM
-            
-            We can't do this simply with distributed RAM as the reads are not
-                from the same addresses, so we need to get creative.
-                
-                Option 1: Use 2x clock domain for reads so we can read twice per
-                    system clock tick
-                Option 2: Use BRAM with wide data bus so we can effectively read multiple
-                    values within a single clock cycle. This might mean we need to arrange
-                        the data so that data is stored in columns, or maybe in wider groups
-                            like groups of 5 or 6 features or something. It might make sense to store
-                                the data as 32 5x8 feature columns. 
     
     
-    Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
-    
-    Could try some hacky tricks with DSP operands like using 3 input bytes for 
-        the DSPs, and for MSBytes just shift output back to correct value
-    
-    Also may need to get hacky with the feature RAMs and have wider outputs so we can
-        effectively read 2 bytes per read cycle
-            The way to do it, is to not just inhale features every cycle for 28 cycles
-                straight, but to consume an input feature on the same states as
-                    when feature RAM data is read and shifted into feature_window.
-                        Then we would have a read/write happening each of the
-                            3 out of 5 states. The read fans out to feature_window
-                                and swap registers. The write data is routed from
-                                    swap registers for 4 of the rows and input
-                                        feature for 1 row.
-
-
-Note: Need to be careful with (conv_col_ctr == COL_END && state == FIVE)
-      Because we are performing a 28x28 convolution map, it might not be
-      state 5 when we need to move to the next row. Also, if its not
-      state 5, we need to set the state back to state 1.
-
+    DSP can perform 2 multiplies at once because we can fit multiple 8-bit operands on each input
+    DSP input data muxes can be simpler if we utilize the 3 data bytes wide A input for features
 */
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -617,7 +579,7 @@ module conv (
     genvar i;
         for (i = 0; i < FILTER_SIZE; i++)
             feature_distributed_ram
-                fram_inst (.clk (i_clk),
+                fram_inst (.clk (i_clk               ),
                            .we  (feature_ram_we   [i]),
                            .a   (feature_ram_addra[i]),
                            .d   (feature_ram_din  [i]),
@@ -741,7 +703,10 @@ module conv (
                 // 15 -> adder tree 1
             end
             TWO: begin
-                next_state = THREE;
+                if (conv_col_ctr == COL_END)
+                    next_state = ONE;
+                else
+                    next_state = THREE;
                 // 10 -> adder tree 1,
                 // 5  -> adder tree 2
             end
@@ -769,9 +734,8 @@ module conv (
         else
             if (conv_col_ctr == (9) && state == FOUR)
                 consume_features <= 0;
-            else if (i_feature_valid &&
-                        (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
-                                consume_features <= 1;
+            else if (i_feature_valid && (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
+                consume_features <= 1;
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
@@ -819,9 +783,9 @@ module conv (
             end
         end
     
+    // Not all values need reset, but lets have the 25x8=200 FFs share the same control set
     always_ff @(posedge i_clk)
         if (i_rst)
-            // Not all values need to be reset, but its not bad if the 25x8=200 FFs share the same control set
             next_initial_feature_window <= '{default: 0};
         else
             if (~fram_has_been_full)
@@ -833,7 +797,6 @@ module conv (
                         <= next_initial_feature_window[i+1][fram_col_ctr];
                 next_initial_feature_window[FILTER_SIZE-1][fram_col_ctr] <= i_feature;
             end
-                
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
@@ -845,19 +808,19 @@ module conv (
                     feature_ram_addrb[i] <= conv_col_ctr;
                 conv_col_ctr <= conv_col_ctr + 1;
             end
-            
             if (state == TWO | state == FOUR | state == FIVE)
                 for (int i = 0; i < FILTER_SIZE; i++)
                     feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
-            
-            if ((conv_col_ctr == COL_END && state == FIVE)) // or start of MACC operations
-                feature_window <= next_initial_feature_window;
-            
-            if (conv_col_ctr == COL_END && state == FIVE) begin
+            if (conv_col_ctr == COL_END &&
+                (state == TWO ||
+                    (~fram_has_been_full &&
+                        fram_col_ctr == COL_END &&
+                            fram_row_ctr == ROW_END)))
+                                feature_window <= next_initial_feature_window;
+            if (conv_col_ctr == COL_END && state == TWO) begin
                 conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
             end
-            
         end
     
     always_ff @(posedge i_clk) begin
