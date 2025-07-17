@@ -7,6 +7,7 @@
         timings for feature distributed RAM and take feature control logic
 
     Study: Get outputs of DSP48s to carry chain resources efficiently
+           Get feature and weight operands to DSPs efficiently
            Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
 
     Latency due to Design
@@ -14,6 +15,8 @@
         = 6*(5*5)*(28*28) = 117600 multiplies / 90 DSPs = 1307 cycles
         
     State:         0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14
+    
+    Valid:         0,  0,  0,  0,  0,  0,  1,  1,  0,  1,  0,  1,  1,  0,  1
     
     adder 1-1:    15, 18,  9,  5,  3,  2,  1
     adder 2-1:         5, 18, 14,  7,  4,  2,  1
@@ -729,8 +732,9 @@ module conv (
         if (i_rst)
             consume_features <= 0;
         else
-            if (conv_col_ctr == (9) && state == FOUR)
-                consume_features <= 0;
+            if ((conv_col_ctr == (9) && state == THREE) |
+                ~fram_has_been_full && fram_col_ctr == COL_END-1 && fram_row_ctr == FILTER_SIZE-1)
+                    consume_features <= 0;
             else if (i_feature_valid && (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
                 consume_features <= 1;
     
@@ -749,7 +753,8 @@ module conv (
             if (consume_features) begin
                 // Feature consumption control (FWFT FIFO read enable)
                 take_feature_d0 <= 1;
-                if ((conv_col_ctr == (9) && state == THREE) | (conv_col_ctr == (9) && state == FOUR))
+                if ((conv_col_ctr == (9) && state == TWO) |
+                    (conv_col_ctr == (9) && state == THREE))
                     take_feature_d0 <= 0;
                 // Feature consumption logic before feature RAM has been full
                 if (take_feature_d1) begin
@@ -875,12 +880,16 @@ module conv (
                     dsp_p [i][OFFSET_GRP_SZ*j+k] <= dsp_m [i][OFFSET_GRP_SZ*j+k];
                 end
     
-    always_ff @(posedge i_clk) begin
-        static state_t valid_states[3] = '{TWO, FOUR, FIVE};
-        for (int i = 0; i < 3; i++)
-            adder_tree_valid_sr[i] <=
-                {adder_tree_valid_sr[i][11:0], macc_en ? state == valid_states[i]: 1'b0};
-    end
+    always_ff @(posedge i_clk)
+        if (macc_en) begin
+            adder_tree_valid_sr[0] <=
+                {adder_tree_valid_sr[0][11:0], state == ONE ? 1'b1: 1'b0};
+            adder_tree_valid_sr[1] <=
+                {adder_tree_valid_sr[1][11:0],
+                    (state == TWO && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
+            adder_tree_valid_sr[2] <=
+                {adder_tree_valid_sr[2][11:0], state == FOUR ? 1'b1: 1'b0};
+        end
     
 //    TODO: Syntax simplify
 //          for each adder tree
