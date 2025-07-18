@@ -41,7 +41,7 @@ module conv_study_top (
     localparam NUM_CONV_FILTERS = 6;
     
     // MMCM
-    logic clk50m;
+    logic clk100m;
     logic locked;
     
     logic              conv_feature_in_valid;
@@ -55,20 +55,30 @@ module conv_study_top (
     logic              pool_features_out_valid;
     logic signed [7:0] pool_features_out[0:5];
     
-
     sys_mmcm_12m_to_50m sys_mmcm_inst (.clk(top_i_clk),
                                        .reset(top_i_rst),
-                                       .clk50m(clk50m),
+                                       .clk100m(clk100m),
                                        .locked(locked));
     
-    feature_fwft feature_fwft_inst (.i_clk(clk50m),
+    pixel_fifo pixel_fifo_inst (.i_spi_clk(),
+                                .i_sys_clk(),
+                                .i_rst(),
+                                .i_rd_en(),
+                                .i_wr_en(),
+                                .i_feature(),
+                                .o_feature_valid(),
+                                .o_feature());
+    
+    
+    
+    feature_fwft feature_fwft_inst (.i_clk(clk100m),
                                     .i_rst(top_i_rst),
                                     .i_in_feature(top_i_feature_in),
                                     .i_rd_en(conv_receive_feature),
                                     .o_feature_valid(conv_feature_in_valid),
                                     .o_out_feature(conv_feature_in));
 
-    conv conv_inst (.i_clk(clk50m),
+    conv conv_inst (.i_clk(clk100m),
                     .i_rst(top_i_rst),
                     .i_feature_valid(conv_feature_in_valid),
                     .i_feature(conv_feature_in),
@@ -76,14 +86,14 @@ module conv_study_top (
                     .o_feature_valid(pool_features_in_valid),
                     .o_features(pool_features_in));
     
-    max_pool max_pool_inst (.i_clk(clk50m),
+    max_pool max_pool_inst (.i_clk(clk100m),
                             .i_rst(top_i_rst),
                             .i_feature_valid(pool_features_in_valid),
                             .i_features(pool_features_in),
                             .o_feature_valid(pool_features_out_valid),
                             .o_features(pool_features_out));
     
-    post_processing post_processing_inst (.i_clk(clk50m),
+    post_processing post_processing_inst (.i_clk(clk100m),
                                           .i_features_valid(pool_features_out_valid),
                                           .i_features_in(pool_features_out),
                                           .o_feature_out(top_o_feature_out));

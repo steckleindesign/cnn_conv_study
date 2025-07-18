@@ -2,10 +2,6 @@
 //////////////////////////////////////////////////////////////////////////////////
 /*
 
-    Current steps:
-        decide where state machine should start and what states/counts to consume features
-        timings for feature distributed RAM and take feature control logic
-
     Study: Get outputs of DSP48s to carry chain resources efficiently
            Get feature and weight operands to DSPs efficiently
            Why is the DSP48E1 connectivity so unclean, all A pins connected to same LUT O6?
@@ -90,15 +86,10 @@ module conv (
     // Hence, 23 slices (12 CLBs) will be used for the weight RAMs
     
     // Initialize trainable parameters
-    // Weights
-    // (* rom_style = "distributed" *)
-    // logic signed [7:0] raw_weights [0:NUM_DSP48E1*WEIGHT_ROM_DEPTH-1];
-    // initial $readmemb(WEIGHTS_FILE, raw_weights);
-    
-    logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];
-    
+    (* rom_style = "distributed" *)
+    logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];    
     // integer raw_idx;
-    // initial begin
+    initial begin
     //     $readmemb(WEIGHTS_FILE, raw_weights);
     //     raw_idx = 0;
     //     for (int i = 0; i < NUM_FILTERS; i++)
@@ -109,9 +100,8 @@ module conv (
     //                     raw_idx = raw_idx + 1;
     //                 end
     // end
-
-    // Hardcoded initialization of Distributed RAM weights
-    initial begin
+        // Not many weights/operands found in netlist,
+        // something must be getting optimized out
         weights[0][0][0][0] = 8'b01111011;
         weights[0][0][0][1] = 8'b11010111;
         weights[0][0][0][2] = 8'b11100000;
@@ -589,7 +579,7 @@ module conv (
     endgenerate
     
     // The actual feature window to be multiplied by the filter kernel
-    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1]              = '{default: 0};
+    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
     // We buffer the initial feature window of the next row
     // It loads during convolution operation of the preceeding row
@@ -597,7 +587,7 @@ module conv (
     
     // Registers to hold temporary feature RAM data
     // as part of the input feature consumption logic
-    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2]                        = '{default: 0};
+    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2];
     
     // Signals holding the DSP48E1 operands, used for readability
     logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
@@ -785,7 +775,6 @@ module conv (
             end
         end
     
-    // Not all values need reset, but lets have the 25x8=200 FFs share the same control set
     always_ff @(posedge i_clk)
         if (i_rst)
             next_initial_feature_window <= '{default: 0};
