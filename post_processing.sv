@@ -32,6 +32,7 @@ module post_processing (
         processed_feature <= stage2[1] + stage2[0];
     end
     
-    assign o_feature_out = processed_feature;
+    always_ff @(posedge i_clk)
+        o_feature_out <= processed_feature;
     
 endmodule

@@ -1,6 +1,18 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 
+// Theory of operation
+
+// Data written from SPI interface synchronous to SPI clock
+// Data read from system clock
+
+// When read enable and write enable is set high
+//  Shift data out of FIFO
+
+// FIFO almost full flag for when there is enough data to begin CNN processing
+
+// FIFO not-empty signal to tell convolutional layer that valid data is in FIFO
+
 //////////////////////////////////////////////////////////////////////////////////
 
 module pixel_fifo(
@@ -14,7 +26,7 @@ module pixel_fifo(
     output logic [7:0] o_feature
 );
 
-    logic unused;
+    logic fifo_full; // NC
 
     fifo_generator_0 fifo_0_inst (.rst   (i_rst),
                                   .wr_clk(i_spi_clk),
@@ -23,7 +35,7 @@ module pixel_fifo(
                                   .rd_en (i_rd_en),
                                   .din   (i_feature),
                                   .dout  (o_feature),
-                                  .full  (unused),
+                                  .full  (fifo_full),
                                   .empty (~o_feature_valid));
 
 endmodule
