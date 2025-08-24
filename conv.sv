@@ -22,7 +22,7 @@
     adder 2-2:                             5, 18, 14,  7,  4,  2,  1
     adder 3-2:                                    10, 20, 10,  5,  3,  2,  1
     
-    feature_distributed_ram, feature_window, next_initial_feature_window, fram_swap_regs
+    feature_window, next_initial_feature_window, feature_distributed_ram, fram_swap_regs
     
     feature_window is 5x5
     feature_window is the data which feeds feature_operands,
@@ -37,7 +37,7 @@
     
     feature_distributed_ram
     feature_rams is 32x5
-    feature_rams first two and last two columns are zero-padded so non-zero
+    feature_rams first two and last two columns are zero-padded, so non-zero
         data dimensions is 28x5, first two and last two feature map rows are zeros
     feature_rams is the data which feeds feature_window by shifting in data in each 5 rows
     feature_rams data is written directly by input features
@@ -46,6 +46,14 @@
     
     DSP can perform 2 multiplies at once because we can fit multiple 8-bit operands on each input
     DSP input data muxes can be simpler if we utilize the 3 data bytes wide A input for features
+    
+    // Utilization
+    // Weight ROMs
+    // 90 distributed RAMs -> 1 per DSP48E1
+    // 8-bit signed data x 6 filters x 5 rows x 3 columns x 5 deep
+    // Overall there is 90x5 = 90 8x8-bit Distributed RAMs
+    // One SLICEM can implement 4 8x8-bit Distruibuted RAMs
+    // Hence, 23 slices (12 CLBs) will be used for the weight RAMs
 */
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -78,16 +86,12 @@ module conv (
     localparam        COL_START        = 2;
     localparam        COL_END          = 29;
     
-    // Weight ROMs
-    // 90 distributed RAMs -> 1 per DSP48E1
-    // 8-bit signed data x 6 filters x 5 rows x 3 columns x 5 deep
-    // Overall there is 90x5 = 90 8x8-bit Distributed RAMs
-    // One SLICEM can implement 4 8x8-bit Distruibuted RAMs
-    // Hence, 23 slices (12 CLBs) will be used for the weight RAMs
-    
     // Initialize trainable parameters
     (* rom_style = "distributed" *)
-    logic signed [7:0] weights[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1][0:WEIGHT_ROM_DEPTH-1];    
+    logic signed [7:0] weights[0:NUM_FILTERS-1]       // 6
+                              [0:FILTER_SIZE-1]       // 5
+                              [0:OFFSET_GRP_SZ-1]     // 3
+                              [0:WEIGHT_ROM_DEPTH-1]; // 5
     // integer raw_idx;
     initial begin
     //     $readmemb(WEIGHTS_FILE, raw_weights);
@@ -101,7 +105,10 @@ module conv (
     //                 end
     // end
         // Not many weights/operands found in netlist,
-        // something must be getting optimized out
+        // something must be getting optimized out,
+        // or the weights are simple enough that
+        // LUTs can supply weight operands, hence
+        // there is no need for weight distributed ROMs
         weights[0][0][0][0] = 8'b01111011;
         weights[0][0][0][1] = 8'b11010111;
         weights[0][0][0][2] = 8'b11100000;
@@ -558,6 +565,8 @@ module conv (
     logic signed [7:0] biases[0:NUM_FILTERS-1];
     initial $readmemb(BIASES_FILE, biases);
     
+    // True dual-port distributed RAMs (ROMs)
+    // TODO: Study the utilization of true dual port distributed RAM
     logic [7:0] feature_ram_din  [0:FILTER_SIZE-1];
     logic [7:0] feature_ram_we   [0:FILTER_SIZE-1];
     logic [7:0] feature_ram_addra[0:FILTER_SIZE-1];
@@ -582,14 +591,13 @@ module conv (
     logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1];
     
     // We buffer the initial feature window of the next row
-    // It loads during convolution operation of the preceeding row
+    // It loads during the convolution operation of the preceeding row
     logic [7:0] next_initial_feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1] = '{default: 0};
     
-    // Registers to hold temporary feature RAM data
-    // as part of the input feature consumption logic
-    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2];
+    // Registers to hold temporary feature RAM data for input feature consumption logic
+    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2]; // 5 8-bit registers
     
-    // Signals holding the DSP48E1 operands, used for readability
+    // Registers which feed the DSP48E1 operands
     logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     logic signed [7:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     
@@ -611,7 +619,7 @@ module conv (
     logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
     logic [$clog2(COL_END)    -1:0] fram_col_ctr;
     
-    // Convolution Feature location
+    // Convolution output feature location
     logic [$clog2(ROW_END)-1:0] conv_row_ctr;
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
@@ -621,8 +629,7 @@ module conv (
     logic fram_has_been_full; // OK
     logic take_feature_d0, take_feature_d1;
     
-    // Convolution FSM, controls DSP48E1 time multiplexing,
-    // and convolution feature counters
+    // Convolution FSM - controls DSP48E1 operand muxes and convolution feature counters
     typedef enum logic [2:0] {
         ONE, TWO, THREE, FOUR, FIVE
     } state_t;
@@ -722,11 +729,38 @@ module conv (
         if (i_rst)
             consume_features <= 0;
         else
-            if ((conv_col_ctr == (9) && state == THREE) |
-                ~fram_has_been_full && fram_col_ctr == COL_END-1 && fram_row_ctr == FILTER_SIZE-1)
+            // TODO: May be off-by-one here
+            // Stop consuming features when feature RAM is not yet full but the feature RAM
+            // address location has reached the last row and last column location of the feature RAM
+            // or
+            // when the feature RAM has been full and convolution count is 9 and state is THREE
+            if ((~fram_has_been_full && fram_col_ctr == COL_END-1 && fram_row_ctr == FILTER_SIZE-1) |
+                ( fram_has_been_full && conv_col_ctr == (9) && state == THREE))
                     consume_features <= 0;
+            // Consume feature next cycle if feature is valid
+            // and
+            // either
+            // feature RAM has not yet been full
+            // or
+            // convolution counter is 19 and state is FIVE
             else if (i_feature_valid && (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
                 consume_features <= 1;
+    
+    // TODO: Fix signal timings conditions
+    // cycle 0 - consume features gets set
+    // cycle 1 - take_feature_d0 gets set
+    //              feature_ram_addra[i] <= fram_col_ctr
+    //                  fram_col_ctr <= fram_col_ctr + 1
+    // cycle 2 - take_feature_d1 gets set
+    //              fram_swap_regs [i] <= feature_ram_douta[i+1]
+    //                  feature_ram_addra[i] <= fram_col_ctr
+    //                      fram_col_ctr <= fram_col_ctr + 1
+    // cycle 3 - feature_ram_we [i] <= 1
+    //              feature_ram_din[i] <= fram_swap_regs[i]
+    //                  fram_swap_regs [i] <= feature_ram_douta[i+1]
+    //                      feature_ram_addra[i] <= fram_col_ctr
+    //                          fram_col_ctr <= fram_col_ctr + 1
+                    
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
