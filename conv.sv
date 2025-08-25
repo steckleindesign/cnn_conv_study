@@ -763,7 +763,18 @@ module conv (
     //           feature_ram_we [i]   <= 1
     //           feature_ram_din[i]   <= fram_swap_regs[i]
     //           fram_col_ctr         <= fram_col_ctr + 1
-    // cycle 4 - FEATURE RAM WRITE EXECUTES FRAM SWAP REG WRITTEN TO FEATURE RAM COL COUNT
+    // cycle 4 - take_feature_d0      <= 0 (FEATURE RAM WRITE EXECUTES FRAM SWAP REG WRITTEN TO FEATURE RAM COL COUNT)
+    //           feature_ram_addra[i] <= fram_col_ctr
+    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
+    //           feature_ram_we [i]   <= 1
+    //           feature_ram_din[i]   <= fram_swap_regs[i]
+    //           fram_col_ctr         <= fram_col_ctr + 1
+    // cycle 5 - take_feature_d1      <= 0
+    //           consume_features     <= 0
+    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
+    //           feature_ram_we [i]   <= 1
+    //           feature_ram_din[i]   <= fram_swap_regs[i]
+    //           fram_col_ctr         <= fram_col_ctr + 1
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
