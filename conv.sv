@@ -54,6 +54,7 @@
     // Overall there is 90x5 = 90 8x8-bit Distributed RAMs
     // One SLICEM can implement 4 8x8-bit Distruibuted RAMs
     // Hence, 23 slices (12 CLBs) will be used for the weight RAMs
+    // Note - maybe no ROMs necessary, LUTs will be used instead
 */
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -625,9 +626,9 @@ module conv (
     
     // Registered flags
     logic macc_en;            // fix timing of this signal
-    logic consume_features;   // OK
-    logic fram_has_been_full; // OK
-    logic take_feature_d0, take_feature_d1;
+    logic consume_features;   // fix timings
+    logic fram_has_been_full; // Check
+    logic take_feature_d0, take_feature_d1; // fix timings
     
     // Convolution FSM - controls DSP48E1 operand muxes and convolution feature counters
     typedef enum logic [2:0] {
@@ -746,21 +747,23 @@ module conv (
             else if (i_feature_valid && (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
                 consume_features <= 1;
     
+    
     // TODO: Fix signal timings conditions
     // cycle 0 - consume features gets set
-    // cycle 1 - take_feature_d0 gets set
-    //              feature_ram_addra[i] <= fram_col_ctr
-    //                  fram_col_ctr <= fram_col_ctr + 1
-    // cycle 2 - take_feature_d1 gets set
-    //              fram_swap_regs [i] <= feature_ram_douta[i+1]
-    //                  feature_ram_addra[i] <= fram_col_ctr
-    //                      fram_col_ctr <= fram_col_ctr + 1
-    // cycle 3 - feature_ram_we [i] <= 1
-    //              feature_ram_din[i] <= fram_swap_regs[i]
-    //                  fram_swap_regs [i] <= feature_ram_douta[i+1]
-    //                      feature_ram_addra[i] <= fram_col_ctr
-    //                          fram_col_ctr <= fram_col_ctr + 1
-                    
+    //
+    // cycle 1 - take_feature_d0      <= 1
+    //           feature_ram_addra[i] <= fram_col_ctr
+    //
+    // cycle 2 - take_feature_d1      <= 1
+    //           feature_ram_addra[i] <= fram_col_ctr
+    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
+    //
+    // cycle 3 - feature_ram_addra[i] <= fram_col_ctr
+    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
+    //           feature_ram_we [i]   <= 1
+    //           feature_ram_din[i]   <= fram_swap_regs[i]
+    //           fram_col_ctr         <= fram_col_ctr + 1
+    // cycle 4 - FEATURE RAM WRITE EXECUTES FRAM SWAP REG WRITTEN TO FEATURE RAM COL COUNT
     
     always_ff @(posedge i_clk)
         if (i_rst) begin
@@ -773,31 +776,24 @@ module conv (
         end else begin
             feature_ram_we  <= '{default: 0};
             take_feature_d1 <= take_feature_d0;
-            
             if (consume_features) begin
                 // Feature consumption control (FWFT FIFO read enable)
-                take_feature_d0 <= 1;
-                if ((conv_col_ctr == (9) && state == TWO) |
-                    (conv_col_ctr == (9) && state == THREE))
-                    take_feature_d0 <= 0;
+                // Does this use a MUXF8?
+                take_feature_d0 <= ~((conv_col_ctr == (9) && state == TWO) | (conv_col_ctr == (9) && state == THREE));
                 // Feature consumption logic before feature RAM has been full
                 if (take_feature_d1) begin
                     feature_ram_we   [fram_row_ctr] <= 1;
                     feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
                     feature_ram_din  [fram_row_ctr] <= i_feature;
+                    fram_col_ctr <= fram_col_ctr + 1;
                 end
                 // Feature consumption logic once feature RAM has been full
                 if (fram_has_been_full)
                     for (int i = 0; i < FILTER_SIZE-1; i++) begin
                         feature_ram_addra[i] <= fram_col_ctr;
-                        if (take_feature_d0)
-                            fram_swap_regs [i] <= feature_ram_douta[i+1];
-                        if (take_feature_d1) begin
-                            feature_ram_we [i] <= 1;
-                            feature_ram_din[i] <= fram_swap_regs[i];
-                        end
+                        if (take_feature_d0) fram_swap_regs[i] <= feature_ram_douta[i+1];
+                        if (take_feature_d1) feature_ram_din[i] <= fram_swap_regs[i];
                     end
-                fram_col_ctr <= fram_col_ctr + 1;
                 if (fram_col_ctr == COL_END) begin
                     fram_col_ctr <= COL_START;
                     if (fram_row_ctr == FILTER_SIZE-1) begin
