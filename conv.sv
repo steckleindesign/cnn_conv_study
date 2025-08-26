@@ -56,8 +56,6 @@
     // Hence, 23 slices (12 CLBs) will be used for the weight RAMs
     // Note - maybe no ROMs necessary, LUTs will be used instead
     
-    
-    // TODO: Fundamental logic flaw with feature distributed RAM port A addressing!
 */
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -571,10 +569,10 @@ module conv (
     
     // True dual-port distributed RAMs (ROMs)
     // TODO: Study the utilization of true dual port distributed RAM
+    logic       feature_ram_we   [0:FILTER_SIZE-1];
     logic [7:0] feature_ram_din  [0:FILTER_SIZE-1];
-    logic [7:0] feature_ram_we   [0:FILTER_SIZE-1];
-    logic [7:0] feature_ram_addra[0:FILTER_SIZE-1];
-    logic [7:0] feature_ram_addrb[0:FILTER_SIZE-1];
+    logic [4:0] feature_ram_addra[0:FILTER_SIZE-1];
+    logic [4:0] feature_ram_addrb[0:FILTER_SIZE-1];
     logic [7:0] feature_ram_douta[0:FILTER_SIZE-1];
     logic [7:0] feature_ram_doutb[0:FILTER_SIZE-1];
     
@@ -584,11 +582,11 @@ module conv (
             feature_distributed_ram
                 fram_inst (.clk (i_clk               ),
                            .we  (feature_ram_we   [i]),
-                           .a   (feature_ram_addra[i]),
                            .d   (feature_ram_din  [i]),
+                           .a   (feature_ram_addra[i]),
                            .dpra(feature_ram_addrb[i]),
-                           .qspo(feature_ram_douta[i]),
-                           .qdpo(feature_ram_doutb[i]));
+                           .spo (feature_ram_douta[i]),
+                           .dpo (feature_ram_doutb[i]));
     endgenerate
     
     // The actual feature window to be multiplied by the filter kernel
@@ -628,10 +626,10 @@ module conv (
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
     // Registered flags
-    logic macc_en;            // fix timing of this signal
-    logic consume_features;   // fix timings
-    logic fram_has_been_full; // Check
-    logic take_feature_d0, take_feature_d1; // fix timings
+    logic feature_consumption_during_processing; // Verify
+    logic take_feature;                          // Verify
+    logic fram_has_been_full;                    // Verify
+    logic macc_en;                               // Optimize
     
     // Convolution FSM - controls DSP48E1 operand muxes and convolution feature counters
     typedef enum logic [2:0] {
@@ -666,23 +664,17 @@ module conv (
     
     /* Processes
     
-    next state logic
+    next state
     
-    feature consumption flag
+    feature RAM consumption, feature RAM address counters, feature RAM full flag, MACC enable flag
     
-    feature RAM consumption logic, full flag, address counters, MACC enable flag
-    
-    loading of next initial feature window
-    
-    convolution counters and feature window loading
+    next initial feature window loading, feature window loading, convolution counters
     
     registering DSP operands
     
-    DSP48E1 pipelined logic
+    DSP48E1 pipelining
     
-    adder tree valid shift register logic
-    
-    adder tree logic
+    adder tree
     
     register output signals
     
@@ -730,127 +722,59 @@ module conv (
         endcase
     
     always_ff @(posedge i_clk)
-        if (i_rst)
-            consume_features <= 0;
-        else
-            // TODO: May be off-by-one here
-            // Stop consuming features when feature RAM is not yet full but the feature RAM
-            // address location has reached the last row and last column location of the feature RAM
-            // or
-            // when the feature RAM has been full and convolution count is 9 and state is THREE
-            if ((~fram_has_been_full && fram_col_ctr == COL_END-1 && fram_row_ctr == FILTER_SIZE-1) |
-                ( fram_has_been_full && conv_col_ctr == (9) && state == THREE))
-                    consume_features <= 0;
-            // Consume feature next cycle if feature is valid
-            // and
-            // either
-            // feature RAM has not yet been full
-            // or
-            // convolution counter is 19 and state is FIVE
-            else if (i_feature_valid && (~fram_has_been_full || (conv_col_ctr == (19) && state == FIVE)))
-                consume_features <= 1;
-    
-    
-    // TODO: Fix signal timings conditions
-    // cycle 0 - consume_features     <= 1
-    //           [consume_features = 0, take_feature_d0 = 0, take_feature_d1 = 0]
-    //
-    // cycle 1 - take_feature_d0      <= 1
-    //           feature_ram_addra[i] <= fram_col_ctr
-    //           [consume_features = 1, take_feature_d0 = 0, take_feature_d1 = 0]
-    //
-    // cycle 2 - take_feature_d1      <= 1
-    //           feature_ram_addra[i] <= fram_col_ctr
-    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
-    //           [consume_features = 1, take_feature_d0 = 1, take_feature_d1 = 0]
-    //
-    // cycle 3 - feature_ram_addra[i] <= fram_col_ctr
-    //           fram_swap_regs [i]   <= feature_ram_douta[i+1]
-    //           feature_ram_we [i]   <= 1
-    //           feature_ram_din[i]   <= fram_swap_regs[i]
-    //           fram_col_ctr         <= fram_col_ctr + 1
-    //           [consume_features = 1, take_feature_d0 = 1, take_feature_d1 = 1]
-    //
-    // cycle 4 - (FEATURE RAM WRITE EXECUTES FRAM SWAP REG WRITTEN TO FEATURE RAM COL COUNT)
-    //           take_feature_d0      <= 0
-    //           feature_ram_addra[i] <= fram_col_ctr
-    //           feature_ram_we [i]   <= 1
-    //           feature_ram_din[i]   <= fram_swap_regs[i]
-    //           fram_col_ctr         <= fram_col_ctr + 1
-    //           [consume_features = 1, take_feature_d0 = 1, take_feature_d1 = 1]
-    //
-    // cycle 5 - (FEATURE RAM WRITE EXECUTES FRAM SWAP REG WRITTEN TO FEATURE RAM COL COUNT)
-    //           take_feature_d1      <= 0
-    //           consume_features     <= 0
-    //           [consume_features = 1, take_feature_d0 = 0, take_feature_d1 = 1]
-    //
-    // cycle 6 - [consume_features = 0, take_feature_d0 = 0, take_feature_d1 = 0]
-    
-    always_ff @(posedge i_clk)
         if (i_rst) begin
-            take_feature_d0    <= 0;
-            take_feature_d1    <= 0;
-            fram_has_been_full <= 0;
-            macc_en            <= 0;
-            fram_row_ctr       <= ROW_START;
-            fram_col_ctr       <= COL_START;
+            feature_consumption_during_processing <= 0;
+            take_feature                          <= 0;
+            fram_has_been_full                    <= 0;
+            macc_en                               <= 0;
+            fram_row_ctr                          <= ROW_START;
+            fram_col_ctr                          <= COL_START;
         end else begin
-            feature_ram_we  <= '{default: 0};
-            take_feature_d1 <= take_feature_d0;
-            if (consume_features) begin
-                // Feature consumption control (FWFT FIFO read enable)
-                // Does this use a MUXF8?
-                take_feature_d0 <= ~((conv_col_ctr == (9) && state == TWO) | (conv_col_ctr == (9) && state == THREE));
-                // Feature consumption logic before feature RAM has been full
-                if (take_feature_d0 & take_feature_d1) begin
-                    feature_ram_we   [fram_row_ctr] <= 1;
-                    feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
-                    feature_ram_din  [fram_row_ctr] <= i_feature;
-                end
-                if (take_feature_d0 & take_feature_d1) fram_col_ctr <= fram_col_ctr + 1;
-                // Feature consumption logic once feature RAM has been full
-                if (fram_has_been_full)
-                    for (int i = 0; i < FILTER_SIZE-1; i++) begin
-                        feature_ram_addra[i] <= fram_col_ctr;
-                        if (take_feature_d0) begin
-                            fram_swap_regs[i] <= feature_ram_douta[i+1];
-                            if (take_feature_d1) begin
-                                feature_ram_we [i] <= 1;
-                                feature_ram_din[i] <= fram_swap_regs[i];
-                            end
-                        end
-                    end
-                if (fram_col_ctr == COL_END) begin
-                    fram_col_ctr <= COL_START;
-                    if (fram_row_ctr == FILTER_SIZE-1) begin
-                        fram_has_been_full <= 1;
-                        macc_en            <= 1;
-                    end else
-                        fram_row_ctr <= fram_row_ctr + 1;
-                end
+            take_feature <= 0;
+            feature_ram_we <= '{default: 0};
+            // Fix start and stop count/state for feature_consumption_during_processing
+            if (conv_col_ctr == (9) && state == THREE) feature_consumption_during_processing <= 0;
+            else if (conv_col_ctr == (19) && state == FIVE) feature_consumption_during_processing <= 1;
+            if (i_feature_valid & ~fram_has_been_full) begin
+                feature_ram_we   [fram_row_ctr] <= 1;
+                feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
+                feature_ram_din  [fram_row_ctr] <= i_feature;
+            end else if (feature_consumption_during_processing) begin
+                for (int i = 0; i < FILTER_SIZE-1; i++)
+                    feature_ram_we   [i] <= 1;
+                    feature_ram_addra[i] <= fram_col_ctr;
+                feature_ram_din <= {feature_ram_douta[3:0], i_feature};
+            end
+            if ((i_feature_valid & ~fram_has_been_full) | feature_consumption_during_processing) begin
+                fram_col_ctr <= fram_col_ctr + 1;
+                take_feature <= 1;
+            end
+            if (fram_col_ctr == COL_END) begin
+                fram_col_ctr <= COL_START;
+                if (fram_row_ctr == FILTER_SIZE-1) begin
+                    fram_has_been_full <= 1;
+                    macc_en            <= 1;
+                end else
+                    fram_row_ctr <= fram_row_ctr + 1;
             end
         end
     
-    always_ff @(posedge i_clk)
-        if (i_rst)
-            next_initial_feature_window <= '{default: 0};
-        else
-            if (~fram_has_been_full)
-                if (fram_col_ctr < FILTER_SIZE)
-                    next_initial_feature_window[fram_row_ctr][fram_col_ctr] <= i_feature;
-            else if (fram_col_ctr < FILTER_SIZE) begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
-                    next_initial_feature_window[i][fram_col_ctr]
-                        <= next_initial_feature_window[i+1][fram_col_ctr];
-                next_initial_feature_window[FILTER_SIZE-1][fram_col_ctr] <= i_feature;
-            end
-    
+    // TODO: No longering registering DOUT so check timings
     always_ff @(posedge i_clk)
         if (i_rst) begin
-            conv_row_ctr <= ROW_START;
-            conv_col_ctr <= COL_START;
+            next_initial_feature_window <= '{default: 0};
+            conv_row_ctr                <= ROW_START;
+            conv_col_ctr                <= COL_START;
         end else begin
-            if (state == ONE | state == THREE | state == FOUR) begin
+            if (fram_col_ctr < FILTER_SIZE)
+                if (~fram_has_been_full)
+                    next_initial_feature_window[fram_row_ctr][fram_col_ctr] <= i_feature;
+                else begin
+                    for (int i = 0; i < FILTER_SIZE-1; i++)
+                        next_initial_feature_window[i][fram_col_ctr] <= next_initial_feature_window[i+1][fram_col_ctr];
+                    next_initial_feature_window[FILTER_SIZE-1][fram_col_ctr] <= i_feature;
+                end
+            if ((macc_en && state == ONE) | state == THREE | state == FOUR) begin
                 for (int i = 0; i < FILTER_SIZE; i++)
                     feature_ram_addrb[i] <= conv_col_ctr;
                 conv_col_ctr <= conv_col_ctr + 1;
@@ -858,16 +782,13 @@ module conv (
             if (state == TWO | state == FOUR | state == FIVE)
                 for (int i = 0; i < FILTER_SIZE; i++)
                     feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
-            if (conv_col_ctr == COL_END &&
-                (state == TWO ||
-                    (~fram_has_been_full &&
-                        fram_col_ctr == COL_END &&
-                            fram_row_ctr == ROW_END)))
-                                feature_window <= next_initial_feature_window;
             if (conv_col_ctr == COL_END && state == TWO) begin
                 conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
+                feature_window <= next_initial_feature_window;
             end
+            if (~fram_has_been_full && fram_col_ctr == COL_END && fram_row_ctr == ROW_END)
+                feature_window <= next_initial_feature_window;
         end
     
     always_ff @(posedge i_clk) begin
@@ -924,17 +845,6 @@ module conv (
                     dsp_m [i][OFFSET_GRP_SZ*j+k] <= dsp_a2[i][OFFSET_GRP_SZ*j+k] * dsp_b2[i][OFFSET_GRP_SZ*j+k];
                     dsp_p [i][OFFSET_GRP_SZ*j+k] <= dsp_m [i][OFFSET_GRP_SZ*j+k];
                 end
-    
-    always_ff @(posedge i_clk)
-        if (macc_en) begin
-            adder_tree_valid_sr[0] <=
-                {adder_tree_valid_sr[0][11:0], state == ONE ? 1'b1: 1'b0};
-            adder_tree_valid_sr[1] <=
-                {adder_tree_valid_sr[1][11:0],
-                    (state == TWO && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
-            adder_tree_valid_sr[2] <=
-                {adder_tree_valid_sr[2][11:0], state == FOUR ? 1'b1: 1'b0};
-        end
     
 //    TODO: Syntax simplify
 //          for each adder tree
@@ -1013,25 +923,30 @@ module conv (
             
             adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
         end
+        if (macc_en) begin
+            adder_tree_valid_sr[0] <= {adder_tree_valid_sr[0][11:0], state == ONE ? 1'b1: 1'b0};
+            adder_tree_valid_sr[1] <= {adder_tree_valid_sr[1][11:0], (state == TWO && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
+            adder_tree_valid_sr[2] <= {adder_tree_valid_sr[2][11:0], state == FOUR ? 1'b1: 1'b0};
+        end
     end
     
     // 3:1 8-bit (8 LUTs, 2 slices, 1 CLB) mux to output data port register
     always_comb
         if (adder_tree_valid_sr[0][12])
-            selected_tree_result <= adder1_result;
+            selected_tree_result = adder1_result;
         else if (adder_tree_valid_sr[1][12])
-            selected_tree_result <= adder2_result;
+            selected_tree_result = adder2_result;
         else if (adder_tree_valid_sr[2][12])
-            selected_tree_result <= adder3_result;
+            selected_tree_result = adder3_result;
         else
-            selected_tree_result <= adder3_result;
+            selected_tree_result = adder3_result;
     
     always_ff @(posedge i_clk) begin
         o_feature_valid <= adder_tree_valid_sr[0][12] |
                            adder_tree_valid_sr[1][12] |
                            adder_tree_valid_sr[2][12];
         o_features      <= selected_tree_result;
-        o_ready_feature <= take_feature_d0;
+        o_ready_feature <= take_feature;
     end
     
 endmodule
