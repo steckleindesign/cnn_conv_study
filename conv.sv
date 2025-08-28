@@ -725,7 +725,7 @@ module conv (
             feature_ram_we <= '{default: 0};
             // Fix start and stop count/state for feature_consumption_during_processing
             if (conv_col_ctr == (9) && state == THREE) feature_consumption_during_processing <= 0;
-            else if (conv_col_ctr == (19) && state == FIVE) feature_consumption_during_processing <= 1;
+            else if (conv_col_ctr == (20) && state == ONE) feature_consumption_during_processing <= 1;
             if (i_feature_valid & ~fram_has_been_full) begin
                 feature_ram_we   [fram_row_ctr] <= 1;
                 feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
@@ -942,56 +942,54 @@ module conv (
 endmodule
 
 
-
-
 /*
 Possible convolution column count and state pairings
- 2: ONE    + 1
- 3: TWO
- 3: THREE  + 1
- 4: FOUR   + 1
- 5: FIVE
- 5: ONE    + 1
- 6: TWO
- 6: THREE  + 1
- 7: FOUR   + 1
- 8: FIVE
- 8: ONE    + 1
- 9: TWO
- 9: THREE  + 1
-10: FOUR   + 1
-11: FIVE
-11: ONE    + 1
-12: TWO
-12: THREE  + 1
-13: FOUR   + 1
-14: FIVE
-14: ONE    + 1
-15: TWO
-15: THREE  + 1
-16: FOUR   + 1
-17: FIVE
-17: ONE    + 1
-18: TWO
-18: THREE  + 1
-19: FOUR   + 1
-20: FIVE
-20: ONE    + 1
-21: TWO
-21: THREE  + 1
-22: FOUR   + 1
-23: FIVE
-23: ONE    + 1
-24: TWO
-24: THREE  + 1
-25: FOUR   + 1
-26: FIVE
-26: ONE    + 1
-27: TWO
-27: THREE  + 1
-28: FOUR   + 1
-29: FIVE
-29: ONE    ROLL-OVER
+ 1)   2: ONE    + 1
+ 2)   3: TWO
+ 3)   3: THREE  + 1
+ 4)   4: FOUR   + 1
+ 5)   5: FIVE
+ 6)   5: ONE    + 1
+ 7)   6: TWO
+ 8)   6: THREE  + 1
+ 9)   7: FOUR   + 1
+10)   8: FIVE
+11)   8: ONE    + 1
+12)   9: TWO
+13)   9: THREE  + 1
+14)  10: FOUR   + 1
+15)  11: FIVE
+16)  11: ONE    + 1
+17)  12: TWO
+18)  12: THREE  + 1
+19)  13: FOUR   + 1
+20)  14: FIVE
+21)  14: ONE    + 1
+22)  15: TWO
+23)  15: THREE  + 1
+24)  16: FOUR   + 1
+25)  17: FIVE
+26)  17: ONE    + 1
+27)  18: TWO
+28)  18: THREE  + 1
+29)  19: FOUR   + 1
+30)  20: FIVE
+31)  20: ONE    + 1
+32)  21: TWO
+33)  21: THREE  + 1
+34)  22: FOUR   + 1
+35)  23: FIVE
+36)  23: ONE    + 1
+37)  24: TWO
+38)  24: THREE  + 1
+39)  25: FOUR   + 1
+40)  26: FIVE
+41)  26: ONE    + 1
+42)  27: TWO
+43)  27: THREE  + 1
+44)  28: FOUR   + 1
+45)  29: FIVE
+46)  29: ONE    ROLL-OVER
 
 */
 
