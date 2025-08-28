@@ -604,18 +604,12 @@ module conv (
     logic signed [7:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
     
     // All 90 DSP48E1 registers (macro is fully pipelined)
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_a1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_b1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_a2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_b2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_m[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *)
-    logic signed [7:0] dsp_p[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_a1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_b1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_a2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_b2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_m[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_p[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
     
     // Feature RAM location
     logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
@@ -626,8 +620,8 @@ module conv (
     logic [$clog2(COL_END)-1:0] conv_col_ctr;
     
     // Registered flags
-    logic feature_consumption_during_processing; // Verify
-    logic take_feature;                          // Verify
+    logic feature_consumption_during_processing;
+    logic take_feature;
     logic fram_has_been_full;                    // Verify
     logic macc_en;                               // Optimize
     
@@ -689,17 +683,14 @@ module conv (
     always_comb
         case(state)
             ONE: begin
-                if (macc_en)
+                if (macc_en && (conv_col_ctr != COL_END))
                     next_state = TWO;
                 else
                     next_state = ONE;
                 // 15 -> adder tree 1
             end
             TWO: begin
-                if (conv_col_ctr == COL_END)
-                    next_state = ONE;
-                else
-                    next_state = THREE;
+                next_state = THREE;
                 // 10 -> adder tree 1,
                 // 5  -> adder tree 2
             end
@@ -752,19 +743,18 @@ module conv (
             if (fram_col_ctr == COL_END) begin
                 fram_col_ctr <= COL_START;
                 if (fram_row_ctr == FILTER_SIZE-1) begin
-                    fram_has_been_full <= 1;
-                    macc_en            <= 1;
+                    if (i_feature_valid) fram_has_been_full <= 1;
+                    macc_en <= 1;
                 end else
                     fram_row_ctr <= fram_row_ctr + 1;
             end
         end
     
-    // TODO: No longering registering DOUT so check timings
     always_ff @(posedge i_clk)
         if (i_rst) begin
             next_initial_feature_window <= '{default: 0};
-            conv_row_ctr                <= ROW_START;
-            conv_col_ctr                <= COL_START;
+            conv_row_ctr <= ROW_START;
+            conv_col_ctr <= COL_START;
         end else begin
             if (fram_col_ctr < FILTER_SIZE)
                 if (~fram_has_been_full)
@@ -782,7 +772,7 @@ module conv (
             if (state == TWO | state == FOUR | state == FIVE)
                 for (int i = 0; i < FILTER_SIZE; i++)
                     feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
-            if (conv_col_ctr == COL_END && state == TWO) begin
+            if (conv_col_ctr == COL_END && state == ONE) begin
                 conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
                 feature_window <= next_initial_feature_window;
@@ -950,3 +940,62 @@ module conv (
     end
     
 endmodule
+
+
+
+
+/*
+Possible convolution column count and state pairings
+ 2: ONE    + 1
+ 3: TWO
+ 3: THREE  + 1
+ 4: FOUR   + 1
+ 5: FIVE
+ 5: ONE    + 1
+ 6: TWO
+ 6: THREE  + 1
+ 7: FOUR   + 1
+ 8: FIVE
+ 8: ONE    + 1
+ 9: TWO
+ 9: THREE  + 1
+10: FOUR   + 1
+11: FIVE
+11: ONE    + 1
+12: TWO
+12: THREE  + 1
+13: FOUR   + 1
+14: FIVE
+14: ONE    + 1
+15: TWO
+15: THREE  + 1
+16: FOUR   + 1
+17: FIVE
+17: ONE    + 1
+18: TWO
+18: THREE  + 1
+19: FOUR   + 1
+20: FIVE
+20: ONE    + 1
+21: TWO
+21: THREE  + 1
+22: FOUR   + 1
+23: FIVE
+23: ONE    + 1
+24: TWO
+24: THREE  + 1
+25: FOUR   + 1
+26: FIVE
+26: ONE    + 1
+27: TWO
+27: THREE  + 1
+28: FOUR   + 1
+29: FIVE
+29: ONE    ROLL-OVER
+
+*/
+
+
+
+
+
