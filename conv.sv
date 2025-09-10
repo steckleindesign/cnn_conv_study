@@ -956,6 +956,18 @@ module conv (
         o_ready_feature <= take_feature;
     end
     
+    
+    // Debug
+    assign debug_state                                  = state;
+    assign debug_feature_consumption_during_processing  = feature_consumption_during_processing;
+    assign debug_take_feature                           = take_feature;
+    assign debug_fram_has_been_full                     = fram_has_been_full;
+    assign debug_macc_en                                = macc_en;
+    assign debug_fram_row_ctr                           = fram_row_ctr;
+    assign debug_fram_col_ctr                           = fram_col_ctr;
+    assign debug_conv_row_ctr                           = conv_row_ctr;
+    assign debug_conv_col_ctr                           = conv_col_ctr;
+    
 endmodule
 
 
