@@ -69,7 +69,18 @@ module conv (
     output logic              o_feature_valid,
     output logic signed [7:0] o_features[0:5],
     
-    output logic              o_ready_feature
+    output logic              o_ready_feature,
+    
+    // Debug
+    output logic [2:0] debug_state,
+    output logic       debug_feature_consumption_during_processing,
+    output logic       debug_take_feature,
+    output logic       debug_fram_has_been_full,
+    output logic       debug_macc_en,
+    output logic [4:0] debug_fram_row_ctr,
+    output logic [4:0] debug_fram_col_ctr,
+    output logic [4:0] debug_conv_row_ctr,
+    output logic [4:0] debug_conv_col_ctr
 );
 
     // Hardcode frame dimensions in local params
@@ -721,7 +732,7 @@ module conv (
             fram_row_ctr                          <= ROW_START;
             fram_col_ctr                          <= COL_START;
         end else begin
-            take_feature <= 0;
+            take_feature   <= 0;
             feature_ram_we <= '{default: 0};
             // Fix start and stop count/state for feature_consumption_during_processing
             if (conv_col_ctr == (9) && state == THREE) feature_consumption_during_processing <= 0;
@@ -731,10 +742,16 @@ module conv (
                 feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
                 feature_ram_din  [fram_row_ctr] <= i_feature;
             end else if (feature_consumption_during_processing) begin
-                for (int i = 0; i < FILTER_SIZE-1; i++)
+                for (int i = 0; i < FILTER_SIZE-1; i++) begin
                     feature_ram_we   [i] <= 1;
                     feature_ram_addra[i] <= fram_col_ctr;
-                feature_ram_din <= {feature_ram_douta[3:0], i_feature};
+                end
+                // part-select direction is opposite from prefix index direction
+                feature_ram_din <= {feature_ram_douta[0:3], i_feature};
+                // logic [7:0] feature_ram_din   [0:4]
+                // logic [7:0] feature_ram_douta [0:4]
+                // logic [7:0] i_feature
+                
             end
             if ((i_feature_valid & ~fram_has_been_full) | feature_consumption_during_processing) begin
                 fram_col_ctr <= fram_col_ctr + 1;
