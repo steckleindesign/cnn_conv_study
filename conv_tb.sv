@@ -1,13 +1,14 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 
+// Features out sometimes XXXXXX
 
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv_tb();
 
     // localparam NUM_FEATURE_MAPS = 6;
-    localparam CLK_PERIOD = 5;
+    localparam CLK_PERIOD = 10;
     
     // integer seed;
     
@@ -23,16 +24,29 @@ module conv_tb();
     logic               ready_feature;
     
     // Debug
-    logic [2:0] tb_debug_state;
-    logic       tb_debug_feature_consumption_during_processing;
     logic       tb_debug_take_feature;
+    logic       tb_debug_feature_consumption_during_processing;
     logic       tb_debug_fram_has_been_full;
     logic       tb_debug_macc_en;
+    logic [2:0] tb_debug_state;
     logic [4:0] tb_debug_fram_row_ctr;
     logic [4:0] tb_debug_fram_col_ctr;
     logic [4:0] tb_debug_conv_row_ctr;
     logic [4:0] tb_debug_conv_col_ctr;
-    
+    logic       tb_debug_next_row;
+    logic [7:0] tb_debug_adder1_result;
+    logic [7:0] tb_debug_adder2_result;
+    logic [7:0] tb_debug_adder3_result;
+    logic signed [7:0] tb_debug_weight_operands[0:5][0:4][0:2];
+    logic signed [7:0] tb_debug_feature_operands[0:4][0:2];
+    logic        [7:0] tb_debug_feature_window[0:4][0:4];
+    logic        [7:0] tb_debug_next_initial_feature_window[0:4][0:4];
+    logic              tb_debug_feature_ram_we[0:4];
+    logic        [7:0] tb_debug_feature_ram_din[0:4];
+    logic        [4:0] tb_debug_feature_ram_addra[0:4];
+    logic        [4:0] tb_debug_feature_ram_addrb[0:4];
+    logic        [7:0] tb_debug_feature_ram_douta[0:4];
+    logic        [7:0] tb_debug_feature_ram_doutb[0:4];
     
     conv
         UUT (.i_clk(clk),
@@ -51,12 +65,26 @@ module conv_tb();
              .debug_fram_row_ctr(tb_debug_fram_row_ctr),
              .debug_fram_col_ctr(tb_debug_fram_col_ctr),
              .debug_conv_row_ctr(tb_debug_conv_row_ctr),                          
-             .debug_conv_col_ctr(tb_debug_conv_col_ctr));
+             .debug_conv_col_ctr(tb_debug_conv_col_ctr),
+             .debug_next_row(tb_debug_next_row),
+             .debug_adder1_result(tb_debug_adder1_result),
+             .debug_adder2_result(tb_debug_adder2_result),
+             .debug_adder3_result(tb_debug_adder3_result),
+             .debug_weight_operands(tb_debug_weight_operands),
+             .debug_feature_operands(tb_debug_feature_operands),
+             .debug_feature_window(tb_debug_feature_window),
+             .debug_next_initial_feature_window(tb_debug_next_initial_feature_window),
+             .debug_feature_ram_we(tb_debug_feature_ram_we),
+             .debug_feature_ram_din(tb_debug_feature_ram_din),
+             .debug_feature_ram_addra(tb_debug_feature_ram_addra),
+             .debug_feature_ram_addrb(tb_debug_feature_ram_addrb),
+             .debug_feature_ram_douta(tb_debug_feature_ram_douta),
+             .debug_feature_ram_doutb(tb_debug_feature_ram_doutb));
     
     // Clocking
     initial begin
         clk = 0;
-        forever #(CLK_PERIOD) clk = ~clk;
+        forever #(CLK_PERIOD/2) clk = ~clk;
     end
     
     // Reset
@@ -69,11 +97,17 @@ module conv_tb();
     // Feature stimulus
     // for the first feature stimulus set valid high
     initial begin
+        automatic int i = 0;
         valid_in   = 0;
         feature_in = 0;
-        #20;
+        wait (rst == 0);
         valid_in   = 1;
-        feature_in = 14;
+        while (i < (45*29)) begin
+            feature_in = i;
+            if (ready_feature)
+                i = i + 1;
+            @(posedge clk);
+        end
         #5000;
     end
     

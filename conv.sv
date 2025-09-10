@@ -10,6 +10,7 @@
         6 filters for conv1, 5x5 filter, 28x28 feature map
         = 6*(5*5)*(28*28) = 117600 multiplies / 90 DSPs = 1307 cycles
         
+        
     State:         0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14
     
     Valid:         0,  0,  0,  0,  0,  0,  1,  1,  0,  1,  0,  1,  1,  0,  1
@@ -80,8 +81,31 @@ module conv (
     output logic [4:0] debug_fram_row_ctr,
     output logic [4:0] debug_fram_col_ctr,
     output logic [4:0] debug_conv_row_ctr,
-    output logic [4:0] debug_conv_col_ctr
+    output logic [4:0] debug_conv_col_ctr,
+    output logic       debug_next_row,
+    output logic [7:0] debug_adder1_result,
+    output logic [7:0] debug_adder2_result,
+    output logic [7:0] debug_adder3_result,
+    output logic signed [7:0] debug_weight_operands[0:5][0:4][0:2],
+    output logic signed [7:0] debug_feature_operands[0:4][0:2],
+    output logic        [7:0] debug_feature_window[0:4][0:4],
+    output logic        [7:0] debug_next_initial_feature_window[0:4][0:4],
+    output logic              debug_feature_ram_we[0:4],
+    output logic        [7:0] debug_feature_ram_din[0:4],
+    output logic        [4:0] debug_feature_ram_addra[0:4],
+    output logic        [4:0] debug_feature_ram_addrb[0:4],
+    output logic        [7:0] debug_feature_ram_douta[0:4],
+    output logic        [7:0] debug_feature_ram_doutb[0:4]
 );
+
+
+    
+    logic       feature_ram_we   [0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_din  [0:FILTER_SIZE-1];
+    logic [4:0] feature_ram_addra[0:FILTER_SIZE-1];
+    logic [4:0] feature_ram_addrb[0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_douta[0:FILTER_SIZE-1];
+    logic [7:0] feature_ram_doutb[0:FILTER_SIZE-1];
 
     // Hardcode frame dimensions in local params
     localparam string WEIGHTS_FILE     = "weights.mem";
@@ -601,40 +625,40 @@ module conv (
     endgenerate
     
     // The actual feature window to be multiplied by the filter kernel
-    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1];
+    logic [7:0] feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1]='{default:0};
     
     // We buffer the initial feature window of the next row
     // It loads during the convolution operation of the preceeding row
     logic [7:0] next_initial_feature_window[0:FILTER_SIZE-1][0:FILTER_SIZE-1] = '{default: 0};
     
     // Registers to hold temporary feature RAM data for input feature consumption logic
-    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2]; // 5 8-bit registers
+    logic signed [7:0] fram_swap_regs[0:FILTER_SIZE-2]='{default:0}; // 5 8-bit registers
     
     // Registers which feed the DSP48E1 operands
-    logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
-    logic signed [7:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1];
+    logic signed [7:0] feature_operands[0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1]='{default:0};
+    logic signed [7:0] weight_operands[0:NUM_FILTERS-1][0:FILTER_SIZE-1][0:OFFSET_GRP_SZ-1]='{default:0};
     
     // All 90 DSP48E1 registers (macro is fully pipelined)
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_a1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_b1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_a2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_b2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_m[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
-    (* use_dsp = "yes" *) logic signed [7:0] dsp_p[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1];
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_a1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1]='{default:0};
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_b1[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1]='{default:0};
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_a2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1]='{default:0};
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_b2[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1]='{default:0};
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_m[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1] ='{default:0};
+    (* use_dsp = "yes" *) logic signed [7:0] dsp_p[0:NUM_FILTERS-1][0:FILTER_SIZE*OFFSET_GRP_SZ-1] ='{default:0};
     
     // Feature RAM location
-    logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr;
-    logic [$clog2(COL_END)    -1:0] fram_col_ctr;
+    logic [$clog2(FILTER_SIZE)-1:0] fram_row_ctr=ROW_START;
+    logic [$clog2(COL_END)    -1:0] fram_col_ctr=COL_START;
     
     // Convolution output feature location
-    logic [$clog2(ROW_END)-1:0] conv_row_ctr;
-    logic [$clog2(COL_END)-1:0] conv_col_ctr;
+    logic [$clog2(ROW_END)-1:0] conv_row_ctr=ROW_START;
+    logic [$clog2(COL_END)-1:0] conv_col_ctr=COL_START;
     
     // Registered flags
-    logic feature_consumption_during_processing;
-    logic take_feature;
-    logic fram_has_been_full;                    // Verify
-    logic macc_en;                               // Optimize
+    logic feature_consumption_during_processing=0;
+    logic take_feature=0;
+    logic fram_has_been_full=0;                    // Verify
+    logic macc_en=0;                               // Optimize
     
     // Convolution FSM - controls DSP48E1 operand muxes and convolution feature counters
     typedef enum logic [2:0] {
@@ -643,28 +667,28 @@ module conv (
     state_t state, next_state;
     
     // Adder Tree
-    logic       [12:0] adder_tree_valid_sr[0:2];
-    logic signed [7:0] adder1_stage1[0:NUM_FILTERS-1][0:14]; // 15 dsp outs
-    logic signed [7:0] adder1_stage2[0:NUM_FILTERS-1][0:17]; // 8 adder outs from stage 1 + 10 dsp outs
-    logic signed [7:0] adder1_stage3[0:NUM_FILTERS-1][0:8];  // 9 adder outs from stage 2
-    logic signed [7:0] adder1_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
-    logic signed [7:0] adder1_stage5[0:NUM_FILTERS-1][0:2];  // 3 adder outs from stage 4
-    logic signed [7:0] adder1_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
-    logic signed [7:0] adder1_result[0:NUM_FILTERS-1];       // adder tree 1 result
-    logic signed [7:0] adder2_stage1[0:NUM_FILTERS-1][0:4];  // 5 dsp outs
-    logic signed [7:0] adder2_stage2[0:NUM_FILTERS-1][0:17]; // 3 adder outs from stage 1 + 15 dsp outs
-    logic signed [7:0] adder2_stage3[0:NUM_FILTERS-1][0:13]; // 9 adder outs from stage 2 + 5 dsp outs
-    logic signed [7:0] adder2_stage4[0:NUM_FILTERS-1][0:6];  // 7 adder outs from stage 3
-    logic signed [7:0] adder2_stage5[0:NUM_FILTERS-1][0:3];  // 4 adder outs from stage 4
-    logic signed [7:0] adder2_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
-    logic signed [7:0] adder2_result[0:NUM_FILTERS-1];       // adder tree 2 result
-    logic signed [7:0] adder3_stage1[0:NUM_FILTERS-1][0:9];  // 10 dsp outs
-    logic signed [7:0] adder3_stage2[0:NUM_FILTERS-1][0:19]; // 5 adder outs from stage 1 + 15 dsp outs
-    logic signed [7:0] adder3_stage3[0:NUM_FILTERS-1][0:9];  // 10 adder outs from stage 2
-    logic signed [7:0] adder3_stage4[0:NUM_FILTERS-1][0:4];  // 5 adder outs from stage 3
-    logic signed [7:0] adder3_stage5[0:NUM_FILTERS-1][0:2];  // 3 adder outs from stage 4
-    logic signed [7:0] adder3_stage6[0:NUM_FILTERS-1][0:1];  // 2 adder outs from stage 5
-    logic signed [7:0] adder3_result[0:NUM_FILTERS-1];       // adder tree 3 result
+    logic       [12:0] adder_tree_valid_sr[0:2]='{default:0};
+    logic signed [7:0] adder1_stage1[0:NUM_FILTERS-1][0:14]='{default:0}; // 15 dsp outs
+    logic signed [7:0] adder1_stage2[0:NUM_FILTERS-1][0:17]='{default:0}; // 8 adder outs from stage 1 + 10 dsp outs
+    logic signed [7:0] adder1_stage3[0:NUM_FILTERS-1][0:8]='{default:0};  // 9 adder outs from stage 2
+    logic signed [7:0] adder1_stage4[0:NUM_FILTERS-1][0:4]='{default:0};  // 5 adder outs from stage 3
+    logic signed [7:0] adder1_stage5[0:NUM_FILTERS-1][0:2]='{default:0};  // 3 adder outs from stage 4
+    logic signed [7:0] adder1_stage6[0:NUM_FILTERS-1][0:1]='{default:0};  // 2 adder outs from stage 5
+    logic signed [7:0] adder1_result[0:NUM_FILTERS-1]='{default:0};       // adder tree 1 result
+    logic signed [7:0] adder2_stage1[0:NUM_FILTERS-1][0:4]='{default:0};  // 5 dsp outs
+    logic signed [7:0] adder2_stage2[0:NUM_FILTERS-1][0:17]='{default:0}; // 3 adder outs from stage 1 + 15 dsp outs
+    logic signed [7:0] adder2_stage3[0:NUM_FILTERS-1][0:13]='{default:0}; // 9 adder outs from stage 2 + 5 dsp outs
+    logic signed [7:0] adder2_stage4[0:NUM_FILTERS-1][0:6]='{default:0};  // 7 adder outs from stage 3
+    logic signed [7:0] adder2_stage5[0:NUM_FILTERS-1][0:3]='{default:0};  // 4 adder outs from stage 4
+    logic signed [7:0] adder2_stage6[0:NUM_FILTERS-1][0:1]='{default:0};  // 2 adder outs from stage 5
+    logic signed [7:0] adder2_result[0:NUM_FILTERS-1]='{default:0};       // adder tree 2 result
+    logic signed [7:0] adder3_stage1[0:NUM_FILTERS-1][0:9]='{default:0};  // 10 dsp outs
+    logic signed [7:0] adder3_stage2[0:NUM_FILTERS-1][0:19]='{default:0}; // 5 adder outs from stage 1 + 15 dsp outs
+    logic signed [7:0] adder3_stage3[0:NUM_FILTERS-1][0:9]='{default:0};  // 10 adder outs from stage 2
+    logic signed [7:0] adder3_stage4[0:NUM_FILTERS-1][0:4]='{default:0};  // 5 adder outs from stage 3
+    logic signed [7:0] adder3_stage5[0:NUM_FILTERS-1][0:2]='{default:0};  // 3 adder outs from stage 4
+    logic signed [7:0] adder3_stage6[0:NUM_FILTERS-1][0:1]='{default:0};  // 2 adder outs from stage 5
+    logic signed [7:0] adder3_result[0:NUM_FILTERS-1]='{default:0};       // adder tree 3 result
     logic signed [7:0] selected_tree_result[0:NUM_FILTERS-1];
     
     /* Processes
@@ -742,16 +766,11 @@ module conv (
                 feature_ram_addra[fram_row_ctr] <= fram_col_ctr;
                 feature_ram_din  [fram_row_ctr] <= i_feature;
             end else if (feature_consumption_during_processing) begin
-                for (int i = 0; i < FILTER_SIZE-1; i++) begin
+                for (int i = 0; i < FILTER_SIZE; i++) begin
                     feature_ram_we   [i] <= 1;
                     feature_ram_addra[i] <= fram_col_ctr;
                 end
-                // part-select direction is opposite from prefix index direction
-                feature_ram_din <= {feature_ram_douta[0:3], i_feature};
-                // logic [7:0] feature_ram_din   [0:4]
-                // logic [7:0] feature_ram_douta [0:4]
-                // logic [7:0] i_feature
-                
+                feature_ram_din <= {i_feature, feature_ram_douta[0:3]};
             end
             if ((i_feature_valid & ~fram_has_been_full) | feature_consumption_during_processing) begin
                 fram_col_ctr <= fram_col_ctr + 1;
@@ -789,7 +808,9 @@ module conv (
             if (state == TWO | state == FOUR | state == FIVE)
                 for (int i = 0; i < FILTER_SIZE; i++)
                     feature_window[i] <= {feature_ram_doutb[i], feature_window[i][1:4]};
+            debug_next_row <= 0;
             if (conv_col_ctr == COL_END && state == ONE) begin
+                debug_next_row <= 1;
                 conv_row_ctr <= conv_row_ctr + 1;
                 conv_col_ctr <= COL_START;
                 feature_window <= next_initial_feature_window;
@@ -931,8 +952,8 @@ module conv (
             adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
         end
         if (macc_en) begin
-            adder_tree_valid_sr[0] <= {adder_tree_valid_sr[0][11:0], state == ONE ? 1'b1: 1'b0};
-            adder_tree_valid_sr[1] <= {adder_tree_valid_sr[1][11:0], (state == TWO && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
+            adder_tree_valid_sr[0] <= {adder_tree_valid_sr[0][11:0], (state == ONE && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
+            adder_tree_valid_sr[1] <= {adder_tree_valid_sr[1][11:0], state == TWO  ? 1'b1: 1'b0};
             adder_tree_valid_sr[2] <= {adder_tree_valid_sr[2][11:0], state == FOUR ? 1'b1: 1'b0};
         end
     end
@@ -968,6 +989,23 @@ module conv (
     assign debug_conv_row_ctr                           = conv_row_ctr;
     assign debug_conv_col_ctr                           = conv_col_ctr;
     
+    assign debug_adder1_result = adder1_result[0];
+    assign debug_adder2_result = adder2_result[0];
+    assign debug_adder3_result = adder3_result[0];
+    
+    assign debug_weight_operands  =  weight_operands;
+    assign debug_feature_operands = feature_operands;
+    
+    assign debug_feature_window              = feature_window;
+    assign debug_next_initial_feature_window = next_initial_feature_window;
+    
+    assign debug_feature_ram_we    = feature_ram_we;
+    assign debug_feature_ram_din   = feature_ram_din;
+    assign debug_feature_ram_addra = feature_ram_addra;
+    assign debug_feature_ram_addrb = feature_ram_addrb;
+    assign debug_feature_ram_douta = feature_ram_douta;
+    assign debug_feature_ram_doutb = feature_ram_doutb;
+        
 endmodule
 
 
