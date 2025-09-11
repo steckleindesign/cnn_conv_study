@@ -756,7 +756,7 @@ module conv (
             fram_row_ctr                          <= ROW_START;
             fram_col_ctr                          <= COL_START;
             for (int i = 0; i < FILTER_SIZE; i++) begin
-                feature_ram_we   [i] <= 0;
+                feature_ram_we   [i] <= 1;
                 feature_ram_din  [i] <= 0;
                 feature_ram_addra[i] <= 0;
                 feature_ram_addrb[i] <= 0;
@@ -958,7 +958,8 @@ module conv (
             adder3_result[i] <= adder3_stage6[i][1] + adder3_stage6[i][0];
         end
         if (macc_en) begin
-            adder_tree_valid_sr[0] <= {adder_tree_valid_sr[0][11:0], (state == ONE && conv_col_ctr != COL_END) ? 1'b1: 1'b0};
+            // Do we need to shift in a zero upon new row?
+            adder_tree_valid_sr[0] <= {adder_tree_valid_sr[0][11:0], state == ONE  ? 1'b1: 1'b0};
             adder_tree_valid_sr[1] <= {adder_tree_valid_sr[1][11:0], state == TWO  ? 1'b1: 1'b0};
             adder_tree_valid_sr[2] <= {adder_tree_valid_sr[2][11:0], state == FOUR ? 1'b1: 1'b0};
         end
@@ -980,37 +981,33 @@ module conv (
                            adder_tree_valid_sr[1][12] |
                            adder_tree_valid_sr[2][12];
         o_features      <= selected_tree_result;
-        o_ready_feature <= take_feature;
     end
     
+    assign o_ready_feature = take_feature;
     
     // Debug
-    assign debug_state                                  = state;
-    assign debug_feature_consumption_during_processing  = feature_consumption_during_processing;
-    assign debug_take_feature                           = take_feature;
-    assign debug_fram_has_been_full                     = fram_has_been_full;
-    assign debug_macc_en                                = macc_en;
-    assign debug_fram_row_ctr                           = fram_row_ctr;
-    assign debug_fram_col_ctr                           = fram_col_ctr;
-    assign debug_conv_row_ctr                           = conv_row_ctr;
-    assign debug_conv_col_ctr                           = conv_col_ctr;
-    
-    assign debug_adder1_result = adder1_result[0];
-    assign debug_adder2_result = adder2_result[0];
-    assign debug_adder3_result = adder3_result[0];
-    
-    assign debug_weight_operands  =  weight_operands;
-    assign debug_feature_operands = feature_operands;
-    
-    assign debug_feature_window              = feature_window;
-    assign debug_next_initial_feature_window = next_initial_feature_window;
-    
-    assign debug_feature_ram_we    = feature_ram_we;
-    assign debug_feature_ram_din   = feature_ram_din;
-    assign debug_feature_ram_addra = feature_ram_addra;
-    assign debug_feature_ram_addrb = feature_ram_addrb;
-    assign debug_feature_ram_douta = feature_ram_douta;
-    assign debug_feature_ram_doutb = feature_ram_doutb;
+    assign debug_state                                 = state;
+    assign debug_feature_consumption_during_processing = feature_consumption_during_processing;
+    assign debug_take_feature                          = take_feature;
+    assign debug_fram_has_been_full                    = fram_has_been_full;
+    assign debug_macc_en                               = macc_en;
+    assign debug_fram_row_ctr                          = fram_row_ctr;
+    assign debug_fram_col_ctr                          = fram_col_ctr;
+    assign debug_conv_row_ctr                          = conv_row_ctr;
+    assign debug_conv_col_ctr                          = conv_col_ctr;
+    assign debug_adder1_result                         = adder1_result[0];
+    assign debug_adder2_result                         = adder2_result[0];
+    assign debug_adder3_result                         = adder3_result[0];
+    assign debug_weight_operands                       = weight_operands;
+    assign debug_feature_operands                      = feature_operands;
+    assign debug_feature_window                        = feature_window;
+    assign debug_next_initial_feature_window           = next_initial_feature_window;
+    assign debug_feature_ram_we                        = feature_ram_we;
+    assign debug_feature_ram_din                       = feature_ram_din;
+    assign debug_feature_ram_addra                     = feature_ram_addra;
+    assign debug_feature_ram_addrb                     = feature_ram_addrb;
+    assign debug_feature_ram_douta                     = feature_ram_douta;
+    assign debug_feature_ram_doutb                     = feature_ram_doutb;
         
 endmodule
 
