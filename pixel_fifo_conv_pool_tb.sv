@@ -3,7 +3,7 @@
 
 //////////////////////////////////////////////////////////////////////////////////
 
-module conv_w_pixel_fifo_tb();
+module pixel_fifo_conv_pool_tb();
 
     localparam CLK_PERIOD = 10;
     
@@ -27,6 +27,10 @@ module conv_w_pixel_fifo_tb();
     // Convolutional block Outputs
     logic               feature_out_valid;
     logic signed  [7:0] features_out[0:5];
+    
+    // Max Pooling Outputs
+    logic               pool_features_out_valid;
+    logic signed  [7:0] pool_features_out[0:5];
     
     // Debug
     logic              tb_debug_take_feature;
@@ -97,6 +101,15 @@ module conv_w_pixel_fifo_tb();
                   .debug_feature_ram_douta(tb_debug_feature_ram_douta),
                   .debug_feature_ram_doutb(tb_debug_feature_ram_doutb));
     
+    
+    max_pool
+        max_pool_uut (.i_clk(clk),
+                      .i_rst(rst),
+                      .i_feature_valid(feature_out_valid),
+                      .i_features(features_out),
+                      .o_feature_valid(pool_features_out_valid),
+                      .o_features(pool_features_out));
+    
     // Clocking
     initial begin
         clk = 0;
@@ -119,8 +132,9 @@ module conv_w_pixel_fifo_tb();
         pixel_valid = 1;
         while (i < (28*28)) begin
             pixel_in = i;
-            if (ready_feature)
+            //if (ready_feature) begin
                 i = i + 1;
+            //end
             @(posedge clk);
         end
         pixel_valid = 0;
