@@ -1,13 +1,10 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 
-// Features out sometimes XXXXXX
-
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv_tb();
 
-    // localparam NUM_FEATURE_MAPS = 6;
     localparam CLK_PERIOD = 10;
     
     // integer seed;
@@ -24,19 +21,19 @@ module conv_tb();
     logic               ready_feature;
     
     // Debug
-    logic       tb_debug_take_feature;
-    logic       tb_debug_feature_consumption_during_processing;
-    logic       tb_debug_fram_has_been_full;
-    logic       tb_debug_macc_en;
-    logic [2:0] tb_debug_state;
-    logic [4:0] tb_debug_fram_row_ctr;
-    logic [4:0] tb_debug_fram_col_ctr;
-    logic [4:0] tb_debug_conv_row_ctr;
-    logic [4:0] tb_debug_conv_col_ctr;
-    logic       tb_debug_next_row;
-    logic [7:0] tb_debug_adder1_result;
-    logic [7:0] tb_debug_adder2_result;
-    logic [7:0] tb_debug_adder3_result;
+    logic              tb_debug_take_feature;
+    logic              tb_debug_feature_consumption_during_processing;
+    logic              tb_debug_fram_has_been_full;
+    logic              tb_debug_macc_en;
+    logic        [2:0] tb_debug_state;
+    logic        [4:0] tb_debug_fram_row_ctr;
+    logic        [4:0] tb_debug_fram_col_ctr;
+    logic        [4:0] tb_debug_conv_row_ctr;
+    logic        [4:0] tb_debug_conv_col_ctr;
+    logic              tb_debug_next_row;
+    logic        [7:0] tb_debug_adder1_result;
+    logic        [7:0] tb_debug_adder2_result;
+    logic        [7:0] tb_debug_adder3_result;
     logic signed [7:0] tb_debug_weight_operands[0:5][0:4][0:2];
     logic signed [7:0] tb_debug_feature_operands[0:4][0:2];
     logic        [7:0] tb_debug_feature_window[0:4][0:4];
@@ -102,10 +99,10 @@ module conv_tb();
         feature_in = 0;
         wait (rst == 0);
         valid_in   = 1;
-        while (i < (45*29)) begin
-            feature_in = i;
+        while (i < (28*28)) begin
             if (ready_feature)
                 i = i + 1;
+            feature_in = i;
             @(posedge clk);
         end
         #5000;
