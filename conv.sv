@@ -755,6 +755,12 @@ module conv (
             macc_en                               <= 0;
             fram_row_ctr                          <= ROW_START;
             fram_col_ctr                          <= COL_START;
+            for (int i = 0; i < FILTER_SIZE; i++) begin
+                feature_ram_we   [i] <= 0;
+                feature_ram_din  [i] <= 0;
+                feature_ram_addra[i] <= 0;
+                feature_ram_addrb[i] <= 0;
+            end
         end else begin
             take_feature   <= 0;
             feature_ram_we <= '{default: 0};
